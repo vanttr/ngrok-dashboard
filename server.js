@@ -143,3 +143,137 @@ async function refreshAllServers() {
 // Initial discovery, then periodic refresh
 refreshAllServers();
 setInterval(refreshAllServers, CONFIG.healthIntervalMs || 10000);
+
+// ---- Target State ----
+let currentTarget = null;  // { port: number, name: string }
+let ngrokError = null;     // error message if ngrok failed to start
+
+// ---- HTTP Server ----
+const server = http.createServer(async (req, res) => {
+  // Common headers
+  res.setHeader('ngrok-skip-browser-warning', 'true');
+  res.setHeader('Access-Control-Allow-Origin', '*');
+
+  // CORS preflight
+  if (req.method === 'OPTIONS') {
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    res.writeHead(204);
+    res.end();
+    return;
+  }
+
+  const url = new URL(req.url, `http://localhost:${SWITCHER_PORT}`);
+  const pathname = url.pathname;
+
+  // ---- API Routes ----
+  if (pathname === '/api/servers') {
+    const list = await refreshAllServers();
+    res.setHeader('Content-Type', 'application/json');
+    res.writeHead(200);
+    res.end(JSON.stringify({
+      servers: list,
+      target: currentTarget,
+      ngrokUrl: ngrokUrl,
+      ngrokError: ngrokError,
+    }));
+    return;
+  }
+
+  if (pathname === '/api/target' && req.method === 'GET') {
+    res.setHeader('Content-Type', 'application/json');
+    res.writeHead(200);
+    res.end(JSON.stringify({ target: currentTarget, ngrokUrl }));
+    return;
+  }
+
+  if (pathname === '/api/target' && req.method === 'POST') {
+    try {
+      const body = await readBody(req);
+      const { port } = JSON.parse(body);
+      if (port === null || port === undefined) {
+        currentTarget = null;
+      } else {
+        const found = serverStatuses[port];
+        if (!found) {
+          res.setHeader('Content-Type', 'application/json');
+          res.writeHead(400);
+          res.end(JSON.stringify({ ok: false, error: `Port ${port} is not a known server` }));
+          return;
+        }
+        currentTarget = { port: found.actualPort || found.configuredPort, name: found.name };
+      }
+      res.setHeader('Content-Type', 'application/json');
+      res.writeHead(200);
+      res.end(JSON.stringify({ ok: true, target: currentTarget }));
+    } catch (e) {
+      res.setHeader('Content-Type', 'application/json');
+      res.writeHead(400);
+      res.end(JSON.stringify({ ok: false, error: 'Invalid JSON body' }));
+    }
+    return;
+  }
+
+  if (pathname === '/ngrok-skip-browser-warning') {
+    res.writeHead(204);
+    res.end();
+    return;
+  }
+
+  if (pathname === '/api/health') {
+    res.setHeader('Content-Type', 'application/json');
+    res.writeHead(200);
+    res.end(JSON.stringify({
+      status: 'ok',
+      uptime: process.uptime(),
+      ngrokConnected: !!ngrokUrl,
+      target: currentTarget,
+    }));
+    return;
+  }
+
+  // ---- Dashboard (GET /) ----
+  // (implemented in Task 6; for now return a placeholder)
+  if (pathname === '/' && req.method === 'GET') {
+    res.setHeader('Content-Type', 'text/html');
+    res.writeHead(200);
+    res.end('<h1>Dashboard placeholder</h1>');
+    return;
+  }
+
+  // ---- Proxy (catch-all) — implemented in Task 5 ----
+  res.setHeader('Content-Type', 'application/json');
+  res.writeHead(503);
+  res.end(JSON.stringify({ error: 'No target selected' }));
+});
+
+// ---- Helpers ----
+function readBody(req) {
+  return new Promise((resolve, reject) => {
+    let body = '';
+    req.on('data', (chunk) => { body += chunk; });
+    req.on('end', () => resolve(body));
+    req.on('error', reject);
+  });
+}
+
+// ---- Start ----
+async function main() {
+  try {
+    await startNgrok();
+  } catch (err) {
+    ngrokError = err.message;
+    console.error('ngrok failed to start, running without tunnel:', err.message);
+  }
+
+  server.on('error', (err) => {
+    console.error(`Server error: ${err.message}`);
+    process.exit(1);
+  });
+
+  server.listen(SWITCHER_PORT, () => {
+    console.log(`Switcher listening on http://localhost:${SWITCHER_PORT}`);
+  });
+}
+
+main();
