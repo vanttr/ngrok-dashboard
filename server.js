@@ -241,10 +241,63 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // ---- Proxy (catch-all) — implemented in Task 5 ----
-  res.setHeader('Content-Type', 'application/json');
-  res.writeHead(503);
-  res.end(JSON.stringify({ error: 'No target selected' }));
+  // ---- Proxy (catch-all) ----
+  if (!currentTarget) {
+    res.setHeader('Content-Type', 'application/json');
+    res.writeHead(503);
+    res.end(JSON.stringify({ error: 'No target selected. Visit the dashboard at / to choose a server.' }));
+    return;
+  }
+
+  const targetHost = 'localhost';
+  const targetPort = currentTarget.port;
+  const targetPath = req.url;
+
+  const proxyReq = http.request(
+    {
+      hostname: targetHost,
+      port: targetPort,
+      path: targetPath,
+      method: req.method,
+      headers: { ...req.headers, host: `${targetHost}:${targetPort}` },
+      timeout: 30000,
+    },
+    (proxyRes) => {
+      // Filter hop-by-hop headers that Node.js manages itself
+      const HOP_BY_HOP = new Set(['transfer-encoding', 'connection', 'keep-alive',
+        'proxy-authenticate', 'proxy-authorization', 'te', 'trailer', 'upgrade']);
+      const filteredHeaders = {};
+      for (const [k, v] of Object.entries(proxyRes.headers)) {
+        if (!HOP_BY_HOP.has(k.toLowerCase())) filteredHeaders[k] = v;
+      }
+      res.writeHead(proxyRes.statusCode, filteredHeaders);
+      proxyRes.pipe(res);
+    }
+  );
+
+  proxyReq.on('error', (err) => {
+    console.error(`Proxy error to :${targetPort}: ${err.message}`);
+    if (!res.headersSent) {
+      res.setHeader('Content-Type', 'application/json');
+      res.writeHead(502);
+      res.end(JSON.stringify({
+        error: `Cannot reach ${currentTarget.name} on port ${targetPort}`,
+        detail: err.message
+      }));
+    }
+  });
+
+  proxyReq.on('timeout', () => {
+    proxyReq.destroy();
+    if (!res.headersSent) {
+      res.setHeader('Content-Type', 'application/json');
+      res.writeHead(504);
+      res.end(JSON.stringify({ error: `Timeout connecting to ${currentTarget.name} on port ${targetPort}` }));
+    }
+  });
+
+  req.pipe(proxyReq);
+  return;
 });
 
 // ---- Helpers ----
