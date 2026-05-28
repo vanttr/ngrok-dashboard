@@ -12,7 +12,9 @@ try {
   console.error('servers.json not found or invalid. Using empty config.');
   CONFIG = { servers: [], scanRange: 50, switcherPort: 9595, healthIntervalMs: 10000 };
 }
-const SWITCHER_PORT = CONFIG.switcherPort || 9595;
+const SWITCHER_PORT = process.env.SWITCHER_PORT || CONFIG.switcherPort || 9595;
+const SWITCHER_HOST = process.env.SWITCHER_HOST || '127.0.0.1';
+const NO_NGROK = !!process.env.NO_NGROK;
 const NGROK_OAUTH = '--oauth=google --oauth-allow-email=vant.tr@gmail.com';
 
 // ---- Ngrok Process Manager ----
@@ -183,7 +185,7 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  const url = new URL(req.url, `http://localhost:${SWITCHER_PORT}`);
+  const url = new URL(req.url, `http://${SWITCHER_HOST}:${SWITCHER_PORT}`);
   const pathname = url.pathname;
   console.log(`${new Date().toISOString().slice(11,19)} ${req.method} ${pathname}`);
 
@@ -352,11 +354,15 @@ function readBody(req) {
 
 // ---- Start ----
 async function main() {
-  try {
-    await startNgrok();
-  } catch (err) {
-    ngrokError = err.message;
-    console.error('ngrok failed to start, running without tunnel:', err.message);
+  if (!NO_NGROK) {
+    try {
+      await startNgrok();
+    } catch (err) {
+      ngrokError = err.message;
+      console.error('ngrok failed to start, running without tunnel:', err.message);
+    }
+  } else {
+    console.log('ngrok disabled (NO_NGROK=1)');
   }
 
   server.on('error', (err) => {
@@ -364,8 +370,8 @@ async function main() {
     process.exit(1);
   });
 
-  server.listen(SWITCHER_PORT, () => {
-    console.log(`Switcher listening on http://localhost:${SWITCHER_PORT}`);
+  server.listen(SWITCHER_PORT, SWITCHER_HOST, () => {
+    console.log(`Switcher listening on http://${SWITCHER_HOST}:${SWITCHER_PORT}`);
   });
 }
 
