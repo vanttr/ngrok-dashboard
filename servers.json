@@ -1,0 +1,14 @@
+{
+  "servers": [
+    { "name": "Codenomad",   "port": 9896 },
+    { "name": "Companion",   "port": 3470 },
+    { "name": "Ollama",      "port": 4000 },
+    { "name": "Vanforms",    "port": 8086 },
+    { "name": "Hub",         "port": 8099 },
+    { "name": "Thevanbot",   "port": 8787 },
+    { "name": "Openchamber", "port": 57123 }
+  ],
+  "scanRange": 50,
+  "switcherPort": 9595,
+  "healthIntervalMs": 10000
+}
