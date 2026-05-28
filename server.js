@@ -29,20 +29,26 @@ function startNgrok() {
   }
 
   return new Promise((resolve, reject) => {
-    const args = ['http', String(SWITCHER_PORT), ...NGROK_OAUTH.split(' '), '--log=stdout'];
+    const args = ['http', String(SWITCHER_PORT), ...NGROK_OAUTH.split(' '), '--log=stdout', '--log-format=json'];
     ngrokProcess = spawn('ngrok', args, { stdio: ['ignore', 'pipe', 'pipe'] });
 
     let resolved = false;
 
     ngrokProcess.stdout.on('data', (data) => {
-      const text = data.toString();
-      // ngrok v3 prints: "Forwarding  https://xxxxx.ngrok-free.dev -> http://localhost:9595"
-      const match = text.match(/Forwarding\s+(https:\/\/[^\s]+)\s+->/);
-      if (match && !resolved) {
-        ngrokUrl = match[1];
-        resolved = true;
-        console.log(`ngrok tunnel: ${ngrokUrl}`);
-        resolve(ngrokUrl);
+      const lines = data.toString().split('\n').filter(Boolean);
+      for (const line of lines) {
+        try {
+          const entry = JSON.parse(line);
+          if (entry.msg === 'started tunnel' && entry.url && !resolved) {
+            ngrokUrl = entry.url;
+            resolved = true;
+            console.log(`ngrok tunnel: ${ngrokUrl}`);
+            resolve(ngrokUrl);
+            return;
+          }
+        } catch {
+          // non-JSON line (banner, warning, etc.) — ignore
+        }
       }
     });
 
