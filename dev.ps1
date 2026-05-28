@@ -1,5 +1,5 @@
 param(
-    [switch]$Tailscale = $false,
+    [switch]$NoTailscale = $false,
     [int]$Port = 9595,
     [string]$HostAddress = "127.0.0.1",
     [switch]$NoNgrok = $false
@@ -48,13 +48,13 @@ Stop-PortProcess -targetPort $Port
 
 # ---- tailscale ----
 
-if ($Tailscale) {
+if (-not $NoTailscale) {
     $tsAddr = Get-TailscaleIPv4
     if ($tsAddr) {
         $HostAddress = "0.0.0.0"
         Write-Host "Tailscale detected: $tsAddr (binding to 0.0.0.0)"
     } else {
-        Write-Warning "-Tailscale set but no Tailscale IPv4 found. Binding to loopback."
+        Write-Warning "No Tailscale IPv4 found. Binding to loopback. Use -NoTailscale to skip detection."
     }
 }
 
