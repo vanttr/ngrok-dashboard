@@ -46,6 +46,10 @@ function Wait-ForPort([int]$targetPort, [int]$timeoutSec = 30) {
 
 Stop-PortProcess -targetPort $Port
 
+# Kill any lingering ngrok processes from previous runs
+Get-Process ngrok -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+Start-Sleep -Seconds 1
+
 # ---- tailscale ----
 
 if (-not $NoTailscale) {
@@ -130,6 +134,15 @@ if (-not $NoNgrok) {
 Write-Host "Press Ctrl+C to stop."
 try {
     $proc.WaitForExit()
+} catch {
+    # Ctrl+C pressed — WaitForExit gets interrupted
 } finally {
+    # Kill the subprocess tree: powershell wrapper, then anything on the port
+    if ($proc -and !$proc.HasExited) {
+        Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+    }
+    Start-Sleep -Milliseconds 500
+    Get-Process ngrok -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+    Stop-PortProcess -targetPort $Port
     Write-Host "Server stopped."
 }

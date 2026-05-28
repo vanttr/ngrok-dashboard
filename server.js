@@ -99,6 +99,7 @@ function stopNgrok() {
 
 process.on('SIGINT', () => { stopNgrok(); process.exit(0); });
 process.on('SIGTERM', () => { stopNgrok(); process.exit(0); });
+process.on('exit', () => { stopNgrok(); });
 
 // ---- Server Discovery & Health Check ----
 const SCAN_RANGE = CONFIG.scanRange || 50;
@@ -367,11 +368,22 @@ function readBody(req) {
 // ---- Start ----
 async function main() {
   if (!NO_NGROK) {
-    try {
-      await startNgrok();
-    } catch (err) {
-      ngrokError = err.message;
-      console.error('ngrok failed to start, running without tunnel:', err.message);
+    let retries = 2;
+    while (retries > 0) {
+      try {
+        await startNgrok();
+        break;
+      } catch (err) {
+        retries--;
+        ngrokError = err.message;
+        if (retries > 0 && err.message.includes('already online')) {
+          console.error('ngrok endpoint conflict, retrying in 2s...');
+          await new Promise(r => setTimeout(r, 2000));
+        } else {
+          console.error('ngrok failed to start, running without tunnel:', err.message);
+          break;
+        }
+      }
     }
   } else {
     console.log('ngrok disabled (NO_NGROK=1)');
