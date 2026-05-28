@@ -299,10 +299,11 @@
   .tunnel-url {
     font-size: var(--text-xs);
     color: var(--accent);
-    word-break: break-all;
+    text-decoration: none;
+    font-weight: 600;
+    white-space: nowrap;
   }
-  .tunnel-url a { color: inherit; text-decoration: none; }
-  .tunnel-url a:hover { text-decoration: underline; }
+  .tunnel-url:hover { text-decoration: underline; }
 
   .empty-state {
     grid-column: 1 / -1;
@@ -336,19 +337,21 @@
 
   <div class="hero-card">
     <div class="hero-row">
-      <h1>Tunnel Switcher</h1>
+      <div>
+        <h1>Tunnel Switcher</h1>
+        <a id="ngrok-url" class="hero-url" href="#" target="_blank">---</a>
+      </div>
       <span id="ngrok-status" class="status-pill status-disconnected">
         <span class="pill-dot"></span>disconnected
       </span>
     </div>
-    <a id="ngrok-url" class="hero-url" href="#" target="_blank" style="display:none"></a>
     <div id="ngrok-error" class="ngrok-error-msg"></div>
   </div>
 
   <div id="server-list" class="server-grid"></div>
 
   <div class="page-footer">
-    Auto-refresh: 10s &middot; Last checked: <span id="last-checked">--</span>
+    Dashboard: /dash &middot; Auto-refresh: 10s &middot; Last checked: <span id="last-checked">--</span>
   </div>
 
 </div>
@@ -380,7 +383,9 @@ function renderHeader(url, error) {
     status.className = 'status-pill status-connected';
     status.innerHTML = '<span class="pill-dot"></span>connected';
   } else {
-    link.style.display = 'none';
+    link.textContent = '(no tunnel)';
+    link.href = '#';
+    link.style.display = '';
     status.className = 'status-pill status-disconnected';
     status.innerHTML = '<span class="pill-dot"></span>disconnected';
   }
@@ -421,7 +426,7 @@ function renderServers(servers, target) {
         <button class="tunnel-btn${isActive ? ' stop' : ''}" ${isDown ? 'disabled' : ''} data-port="${displayPort}">
           ${isActive ? 'Stop' : 'Tunnel'}
         </button>
-        ${isActive && ngrokUrl ? `<span class="tunnel-url"><a href="${escAttr(ngrokUrl)}" target="_blank">${esc(ngrokUrl)}</a></span>` : ''}
+        ${isActive && ngrokUrl ? `<a class="tunnel-url" href="${escAttr(ngrokUrl)}" target="_blank">Open server &rarr;</a>` : ''}
       </div>
     `;
 

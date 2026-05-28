@@ -261,25 +261,31 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // ---- Dashboard (GET /) ----
-  if (pathname === '/' && req.method === 'GET') {
-    try {
-      const html = fs.readFileSync(path.join(__dirname, 'index.html'), 'utf8');
-      res.setHeader('Content-Type', 'text/html; charset=utf-8');
-      res.writeHead(200);
-      res.end(html);
-    } catch (e) {
-      res.writeHead(500);
-      res.end('Dashboard not found');
+  // ---- Dashboard ----
+  // Serve dashboard at /dash, or at / when no target is set
+  if ((pathname === '/dash' || pathname === '/') && req.method === 'GET') {
+    // If a target IS set and they hit /, proxy through instead
+    if (pathname === '/' && currentTarget) {
+      // fall through to proxy below
+    } else {
+      try {
+        const html = fs.readFileSync(path.join(__dirname, 'index.html'), 'utf8');
+        res.setHeader('Content-Type', 'text/html; charset=utf-8');
+        res.writeHead(200);
+        res.end(html);
+      } catch (e) {
+        res.writeHead(500);
+        res.end('Dashboard not found');
+      }
+      return;
     }
-    return;
   }
 
   // ---- Proxy (catch-all) ----
   if (!currentTarget) {
     res.setHeader('Content-Type', 'application/json');
     res.writeHead(503);
-    res.end(JSON.stringify({ error: 'No target selected. Visit the dashboard at / to choose a server.' }));
+    res.end(JSON.stringify({ error: 'No target selected. Visit /dash to choose a server.' }));
     return;
   }
 
