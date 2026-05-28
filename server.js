@@ -104,7 +104,7 @@ async function checkPort(port, timeoutMs = 2000) {
       signal: controller.signal,
       headers: { 'Accept': '*/*' }
     });
-    return resp.ok && resp.status < 400;
+    return resp.status >= 200 && resp.status < 400;
   } catch {
     return false;
   } finally {
@@ -135,7 +135,15 @@ async function discoverServer(server) {
 let scanning = false;
 
 async function refreshAllServers() {
-  if (scanning) return serverStatuses ? Object.values(serverStatuses) : [];
+  if (scanning) {
+    const seen = new Set();
+    return Object.values(serverStatuses).filter(r => {
+      const key = r.name;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }
   scanning = true;
   try {
     const results = await Promise.all(CONFIG.servers.map(discoverServer));
