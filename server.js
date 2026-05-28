@@ -233,11 +233,16 @@ const server = http.createServer(async (req, res) => {
   }
 
   // ---- Dashboard (GET /) ----
-  // (implemented in Task 6; for now return a placeholder)
   if (pathname === '/' && req.method === 'GET') {
-    res.setHeader('Content-Type', 'text/html');
-    res.writeHead(200);
-    res.end('<h1>Dashboard placeholder</h1>');
+    try {
+      const html = fs.readFileSync(path.join(__dirname, 'index.html'), 'utf8');
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      res.writeHead(200);
+      res.end(html);
+    } catch (e) {
+      res.writeHead(500);
+      res.end('Dashboard not found');
+    }
     return;
   }
 
