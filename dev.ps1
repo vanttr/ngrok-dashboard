@@ -81,12 +81,12 @@ if ($NoNgrok) {
 # ---- dispatch ----
 
 Write-Host "Starting ngrok tunnel switcher on ${HostAddress}:$Port..."
-if ($NoNgrok) { Write-Host "(ngrok disabled — local access only)" }
+if ($NoNgrok) { Write-Host "(ngrok disabled -- local access only)" }
 
 $proc = Start-Process powershell.exe -WindowStyle Hidden -PassThru -ArgumentList @(
     "-NoProfile",
     "-Command",
-    "node `"$PSScriptRoot\server.js`" 2>>`"$logErr`" >>`"$logOut`""
+    "node `"$PSScriptRoot\server.js`" 1>`"$logOut`" 2>`"$logErr`""
 )
 
 Write-Host "Server PID: $($proc.Id)  |  Logs: $logOut"
