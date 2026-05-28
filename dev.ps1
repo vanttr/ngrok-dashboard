@@ -63,12 +63,9 @@ if (-not $NoTailscale) {
 $logDir = Join-Path $PSScriptRoot ".tmp"
 if (-not (Test-Path $logDir)) { New-Item -ItemType Directory -Path $logDir -Force | Out-Null }
 
-$logOut = Join-Path $logDir "ngrok-dashboard-dev.out.log"
-$logErr = Join-Path $logDir "ngrok-dashboard-dev.err.log"
-
-# Truncate logs for fresh run
-"" | Out-File -FilePath $logOut -Encoding utf8
-"" | Out-File -FilePath $logErr -Encoding utf8
+$timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
+$logOut = Join-Path $logDir "ngrok-dashboard-dev-$timestamp.out.log"
+$logErr = Join-Path $logDir "ngrok-dashboard-dev-$timestamp.err.log"
 
 # ---- env ----
 
