@@ -79,3 +79,67 @@ function stopNgrok() {
 
 process.on('SIGINT', () => { stopNgrok(); process.exit(0); });
 process.on('SIGTERM', () => { stopNgrok(); process.exit(0); });
+
+// ---- Server Discovery & Health Check ----
+const SCAN_RANGE = CONFIG.scanRange || 50;
+let serverStatuses = {};  // { port: { name, configuredPort, actualPort, health, status } }
+
+async function checkPort(port, timeoutMs = 2000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const resp = await fetch(`http://localhost:${port}`, {
+      signal: controller.signal,
+      headers: { 'Accept': '*/*' }
+    });
+    return resp.ok && resp.status < 400;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function discoverServer(server) {
+  const configuredPort = server.port;
+  const ok = await checkPort(configuredPort);
+  if (ok) {
+    return { name: server.name, configuredPort, actualPort: configuredPort, health: 'ok', status: 'ok' };
+  }
+
+  // Fallback: scan ±SCAN_RANGE around configured port
+  const start = Math.max(1, configuredPort - SCAN_RANGE);
+  const end = configuredPort + SCAN_RANGE;
+  for (let p = start; p <= end; p++) {
+    if (p === configuredPort) continue; // already checked
+    if (await checkPort(p, 500)) {
+      return { name: server.name, configuredPort, actualPort: p, health: 'ok', status: 'drifted' };
+    }
+  }
+
+  return { name: server.name, configuredPort, actualPort: null, health: 'down', status: 'down' };
+}
+
+let scanning = false;
+
+async function refreshAllServers() {
+  if (scanning) return serverStatuses ? Object.values(serverStatuses) : [];
+  scanning = true;
+  try {
+    const results = await Promise.all(CONFIG.servers.map(discoverServer));
+    serverStatuses = {};
+    for (const r of results) {
+      serverStatuses[r.configuredPort] = r;
+      if (r.actualPort && r.actualPort !== r.configuredPort) {
+        serverStatuses[r.actualPort] = r;
+      }
+    }
+    return Object.values(results);
+  } finally {
+    scanning = false;
+  }
+}
+
+// Initial discovery, then periodic refresh
+refreshAllServers();
+setInterval(refreshAllServers, CONFIG.healthIntervalMs || 10000);
