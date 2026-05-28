@@ -4,20 +4,16 @@ Last updated: 2026-05-28 by Van
 
 ## Now
 
-- [ ] Peer review implementation plan (2-round subagent review in progress)
-- [ ] Commit plan + ADRs + state files
+(empty — all tasks complete)
 
 ## Soon (this week)
 
-- [ ] Execute implementation plan: Task 1 — Project scaffold
-- [ ] Execute implementation plan: Task 2 — Ngrok process manager
-- [ ] Execute implementation plan: Tasks 3-8 — Full implementation
-- [ ] Manual integration test against all 7 servers
-- [ ] Clean up test-rig/ directory
+(empty)
 
 ## Later
 
-- (none yet)
+- [ ] Consider adding request body size limit (currently unbounded)
+- [ ] Consider suppressing duplicate DOM rebuild animations on dashboard refresh
 
 ## Blocked / waiting
 
@@ -29,6 +25,15 @@ Last updated: 2026-05-28 by Van
 - [x] ADR 0001: Reverse proxy architecture
 - [x] ADR 0002: Node.js built-in http module
 - [x] ADR 0003: Config + port scan discovery
-- [x] Implementation plan written (8 tasks)
-- [x] Ngrok 3-tunnel limit confirmed (1 URL shared)
-- [x] Reverse proxy model tested and confirmed working
+- [x] Implementation plan written and peer-reviewed (8 tasks)
+- [x] Task 1: Project scaffold (servers.json, package.json, start.bat)
+- [x] Task 2: Ngrok process manager
+- [x] Task 3: Server discovery & health check
+- [x] Task 4: HTTP server & API routes
+- [x] Task 5: HTTP reverse proxy
+- [x] Task 6: Dashboard UI (llm-dashboard glassmorphism style)
+- [x] Task 7: Error handling & edge case hardening
+- [x] Task 8: README & final integration test
+- [x] Smoke test: 15/15 PASS
+- [x] Final code review: PASS
+- [x] Post-review fixes: dedup + 3xx health check
