@@ -5,7 +5,13 @@ const fs = require('fs');
 const path = require('path');
 
 // ---- Configuration ----
-const CONFIG = JSON.parse(fs.readFileSync(path.join(__dirname, 'servers.json'), 'utf8'));
+let CONFIG;
+try {
+  CONFIG = JSON.parse(fs.readFileSync(path.join(__dirname, 'servers.json'), 'utf8'));
+} catch (e) {
+  console.error('servers.json not found or invalid. Using empty config.');
+  CONFIG = { servers: [], scanRange: 50, switcherPort: 9595, healthIntervalMs: 10000 };
+}
 const SWITCHER_PORT = CONFIG.switcherPort || 9595;
 const NGROK_OAUTH = '--oauth=google --oauth-allow-email=vant.tr@gmail.com';
 
@@ -14,6 +20,12 @@ let ngrokProcess = null;
 let ngrokUrl = null;
 
 function startNgrok() {
+  // If ngrok is already running, don't spawn another
+  if (ngrokProcess && ngrokProcess.exitCode === null) {
+    console.log('ngrok already running');
+    return Promise.resolve(ngrokUrl);
+  }
+
   return new Promise((resolve, reject) => {
     const args = ['http', String(SWITCHER_PORT), ...NGROK_OAUTH.split(' '), '--log=stdout'];
     ngrokProcess = spawn('ngrok', args, { stdio: ['ignore', 'pipe', 'pipe'] });
@@ -165,6 +177,7 @@ const server = http.createServer(async (req, res) => {
 
   const url = new URL(req.url, `http://localhost:${SWITCHER_PORT}`);
   const pathname = url.pathname;
+  console.log(`${new Date().toISOString().slice(11,19)} ${req.method} ${pathname}`);
 
   // ---- API Routes ----
   if (pathname === '/api/servers') {
@@ -302,6 +315,20 @@ const server = http.createServer(async (req, res) => {
   });
 
   req.pipe(proxyReq);
+
+  req.on('error', (err) => {
+    if (!res.headersSent) {
+      res.writeHead(500);
+      res.end('Client request error');
+    }
+    proxyReq.destroy();
+  });
+
+  req.on('close', () => {
+    if (!res.headersSent && !proxyReq.destroyed) {
+      proxyReq.destroy();
+    }
+  });
   return;
 });
 
