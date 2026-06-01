@@ -1,6 +1,6 @@
 # Ngrok Dashboard - Current State
 
-Last updated: 2026-05-28 by Van
+Last updated: 2026-05-29 by Van
 
 ## Active spec
 
@@ -14,7 +14,12 @@ Status: complete
 
 ## Current step
 
-All 8 tasks complete. Smoke test: 15/15 PASS. Final code review: PASS. Project is ready for use.
+Bug fix release complete. Three issues fixed:
+1. Dashboard flickering on refresh → fixed with DOM diffing (cardMap pattern)
+2. Auth login errors through tunnel → fixed with Location + Set-Cookie header rewriting
+3. Calculate buttons not working through tunnel → fixed with X-Forwarded-* headers + scoped CORS
+
+Unit tests: 22/22 PASS. Smoke tests: all endpoints PASS.
 
 ## Known blockers
 
@@ -22,8 +27,13 @@ None.
 
 ## Recent decisions
 
-- All ADRs validated against implementation — compliant.
+- Proxy now rewrites Location and Set-Cookie headers so redirects and cookies work through the ngrok tunnel
+- Dashboard uses incremental DOM updates (cardMap) instead of full innerHTML rebuild — no more flickering
+- CORS preflight restricted to API routes only, so OPTIONS requests to backend apps are proxied through correctly
 
 ## Next concrete action
 
-Run `node server.js` to start the switcher. Open the ngrok URL shown in the terminal.
+Test the fixes with live apps (hub, vanforms) through the ngrok tunnel. Verify:
+- Calculate buttons work in FinanceTracker via tunnel
+- Auth login flows complete without redirect-to-localhost errors
+- Dashboard no longer flickers on 10-second refresh

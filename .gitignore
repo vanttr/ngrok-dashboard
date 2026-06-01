@@ -1,0 +1,23 @@
+# Dependencies
+node_modules/
+package-lock.json
+
+# Temp / working directories
+.tmp/
+.codenomad/
+test-results/
+test-screenshots/
+
+# Server logs
+server-stdout.txt
+server-stderr.txt
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor files
+.vscode/
+.idea/
+*.swp
+*.swo

@@ -296,6 +296,25 @@
     box-shadow: 0 4px 18px rgba(168,71,71,0.3);
   }
 
+  .tunnel-btn.start {
+    background: linear-gradient(135deg, var(--ok), #246836);
+    box-shadow: 0 2px 12px rgba(46,125,68,0.2);
+  }
+  .tunnel-btn.start:hover:not(:disabled) {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 18px rgba(46,125,68,0.3);
+  }
+  .tunnel-btn.starting {
+    background: linear-gradient(135deg, var(--ink-soft), #506872);
+    box-shadow: none;
+    cursor: wait;
+    animation: btnPulse 1.2s ease-in-out infinite;
+  }
+  @keyframes btnPulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+  }
+
   .tunnel-url {
     font-size: var(--text-xs);
     color: var(--accent);
@@ -359,6 +378,41 @@
 <script>
 const API = '/api';
 
+// ---- Flicker-free update helpers ----
+// Track cards by port so we can update in place instead of rebuilding DOM
+let cardMap = {};  // { port: { el, state } }
+let startingPorts = {};  // { configuredPort: { timer, startTime } } — keyed by configuredPort to avoid drift mismatch
+
+function statesEqual(a, b) {
+  if (!a || !b) return false;
+  return a.name === b.name && a.health === b.health && a.status === b.status &&
+         a.configuredPort === b.configuredPort && a.actualPort === b.actualPort &&
+         a.isActive === b.isActive && a.ngrokUrl === b.ngrokUrl &&
+         a.hasDevScript === b.hasDevScript && a.isStarting === b.isStarting;
+}
+
+function serverButtonClass(state) {
+  if (state.isStarting) return ' starting';
+  return ' start';
+}
+
+function serverButtonDisabled(state) {
+  return state.isStarting ? 'disabled' : '';
+}
+
+function serverButtonLabel(state) {
+  if (state.isStarting) return 'Starting...';
+  return 'Start Server';
+}
+
+function tunnelButtonClass(state) {
+  return state.isActive ? ' stop' : '';
+}
+
+function tunnelButtonLabel(state) {
+  return state.isActive ? 'Stop Tunnel' : 'Start Tunnel';
+}
+
 async function fetchState() {
   try {
     const resp = await fetch(`${API}/servers`);
@@ -376,64 +430,159 @@ function renderHeader(url, error) {
   const status = document.getElementById('ngrok-status');
   const errorEl = document.getElementById('ngrok-error');
 
-  if (url) {
-    link.href = url.startsWith('http') ? url : 'https://' + url;
-    link.textContent = url;
-    link.style.display = '';
-    status.className = 'status-pill status-connected';
-    status.innerHTML = '<span class="pill-dot"></span>connected';
-  } else {
-    link.textContent = '(no tunnel)';
-    link.href = '#';
-    link.style.display = '';
-    status.className = 'status-pill status-disconnected';
-    status.innerHTML = '<span class="pill-dot"></span>disconnected';
-  }
+  const connected = !!url;
+  const newClass = connected ? 'status-pill status-connected' : 'status-pill status-disconnected';
+  const newText = connected ? url : '(no tunnel)';
+  const newHref = connected ? (url.startsWith('http') ? url : 'https://' + url) : '#';
+  const newInner = connected ? '<span class="pill-dot"></span>connected' : '<span class="pill-dot"></span>disconnected';
+  const newError = error || '';
 
-  errorEl.textContent = error || '';
+  if (link.textContent !== newText) link.textContent = newText;
+  if (link.href !== newHref) link.href = newHref;
+  link.style.display = '';
+  if (status.className !== newClass) status.className = newClass;
+  if (status.innerHTML !== newInner) status.innerHTML = newInner;
+  if (errorEl.textContent !== newError) errorEl.textContent = newError;
 }
 
 function renderServers(servers, target) {
   const container = document.getElementById('server-list');
-  container.innerHTML = '';
+  const ngrokUrlText = target ? (document.getElementById('ngrok-url').textContent || '') : '';
 
+  // Compute desired state for each server
+  const newStateMap = {};
   if (!servers || servers.length === 0) {
-    container.innerHTML = '<div class="empty-state">No servers configured.<br>Add entries to <code>servers.json</code> and restart.</div>';
+    // Show empty state — clear all existing cards
+    const existingKeys = Object.keys(cardMap);
+    if (existingKeys.length > 0) {
+      // First time or all removed: show empty message
+      container.innerHTML = '<div class="empty-state">No servers configured.<br>Add entries to <code>servers.json</code> and restart.</div>';
+      cardMap = {};
+    }
+    // If empty state already showing, do nothing (no flicker)
+    if (container.children.length === 0) {
+      container.innerHTML = '<div class="empty-state">No servers configured.<br>Add entries to <code>servers.json</code> and restart.</div>';
+    }
     return;
   }
 
   for (const s of servers) {
+    const displayPort = s.actualPort || s.configuredPort;
     const isActive = target && s.actualPort === target.port;
     const isDown = s.health === 'down';
     const isDrifted = s.status === 'drifted';
-    const displayPort = s.actualPort || s.configuredPort;
-    const ngrokUrl = target && isActive ? (document.getElementById('ngrok-url').textContent || '') : '';
+    const ngrokUrl = isActive ? ngrokUrlText : '';
 
+    newStateMap[displayPort] = {
+      name: s.name, health: s.health, status: s.status,
+      configuredPort: s.configuredPort, actualPort: s.actualPort,
+      isActive, isDown, isDrifted, ngrokUrl, displayPort,
+      hasDevScript: !!s.hasDevScript,
+      isStarting: !!startingPorts[s.configuredPort]  // Use configuredPort as key — avoids drift mismatch
+    };
+
+    // If server came online while we were starting it, clear the starting state
+    if (s.health === 'ok' && startingPorts[s.configuredPort]) {
+      const info = startingPorts[s.configuredPort];
+      if (info.timer) clearInterval(info.timer);
+      delete startingPorts[s.configuredPort];
+    }
+  }
+
+  // Remove cards that no longer exist
+  for (const port of Object.keys(cardMap)) {
+    if (!(port in newStateMap)) {
+      cardMap[port].el.remove();
+      delete cardMap[port];
+    }
+  }
+
+  // Remove empty-state if present
+  const emptyEl = container.querySelector('.empty-state');
+  if (emptyEl) emptyEl.remove();
+
+  // Create or update cards in server order
+  let insertBefore = container.firstChild;
+  for (const s of servers) {
+    const displayPort = s.actualPort || s.configuredPort;
+    const state = newStateMap[displayPort];
+
+    if (cardMap[displayPort] && statesEqual(cardMap[displayPort].state, state)) {
+      // Unchanged — just ensure correct order
+      cardMap[displayPort].state = state;
+      if (cardMap[displayPort].el !== insertBefore) {
+        container.insertBefore(cardMap[displayPort].el, insertBefore);
+      }
+      insertBefore = cardMap[displayPort].el.nextSibling;
+      continue;
+    }
+
+    // Remove old element before replacing — otherwise the old node stays
+    // in the DOM as a zombie alongside the new card.
+    // Advance insertBefore past the old element BEFORE removing it,
+    // otherwise insertBefore becomes a detached reference and
+    // container.insertBefore() throws NotFoundError.
+    if (cardMap[displayPort]) {
+      if (cardMap[displayPort].el === insertBefore) {
+        insertBefore = cardMap[displayPort].el.nextSibling;
+      }
+      cardMap[displayPort].el.remove();
+      delete cardMap[displayPort];
+    }
+
+    // Build the card HTML
     const card = document.createElement('div');
-    card.className = 'server-card' + (isActive ? ' active' : '') + (isDown ? ' dimmed' : '');
+    card.className = 'server-card' + (state.isActive ? ' active' : '') + (state.isDown ? ' dimmed' : '');
 
     card.innerHTML = `
       <div class="card-top">
-        <span class="server-name">${esc(s.name)}</span>
-        <span class="health-dot ${s.health}"></span>
+        <span class="server-name">${esc(state.name)}</span>
+        <span class="health-dot ${state.health}"></span>
       </div>
       <div class="card-meta">
-        <span class="port-badge">:${displayPort}</span>
-        ${isDrifted ? `<span class="drift-badge">shifted from :${s.configuredPort}</span>` : ''}
-        ${isActive ? '<span class="active-badge">active</span>' : ''}
+        <span class="port-badge">:${state.displayPort}</span>
+        ${state.isDrifted ? `<span class="drift-badge">shifted from :${state.configuredPort}</span>` : ''}
+        ${state.isActive ? '<span class="active-badge">active</span>' : ''}
       </div>
       <div class="card-actions">
-        <button class="tunnel-btn${isActive ? ' stop' : ''}" ${isDown ? 'disabled' : ''} data-port="${displayPort}">
-          ${isActive ? 'Stop' : 'Tunnel'}
-        </button>
-        ${isActive && ngrokUrl ? `<a class="tunnel-url" href="${escAttr(ngrokUrl)}" target="_blank">Open server &rarr;</a>` : ''}
+        ${state.hasDevScript ? `
+          <button class="tunnel-btn${serverButtonClass(state)}" ${serverButtonDisabled(state)} data-action="start-server" data-port="${state.displayPort}">
+            ${serverButtonLabel(state)}
+          </button>
+        ` : ''}
+        ${!state.isDown ? `
+          <button class="tunnel-btn${tunnelButtonClass(state)}" data-action="tunnel" data-port="${state.displayPort}">
+            ${tunnelButtonLabel(state)}
+          </button>
+        ` : ''}
+        ${state.isActive && state.ngrokUrl ? `<a class="tunnel-url" href="${escAttr(state.ngrokUrl)}" target="_blank">Open server &rarr;</a>` : ''}
       </div>
     `;
 
-    const btn = card.querySelector('button');
-    btn.addEventListener('click', () => handleTunnel(btn.dataset.port, isActive));
+    const startBtn = card.querySelector('button[data-action="start-server"]');
+    if (startBtn) {
+      startBtn.addEventListener('click', () => {
+        if (state.isStarting) return;
+        handleStartServer(startBtn.dataset.port);
+      });
+    }
+    const tunnelBtn = card.querySelector('button[data-action="tunnel"]');
+    if (tunnelBtn) {
+      tunnelBtn.addEventListener('click', () => {
+        handleTunnel(tunnelBtn.dataset.port, state.isActive);
+      });
+    }
 
-    container.appendChild(card);
+    // Insert in order — insertBefore is guaranteed to be a valid DOM node
+    // or null (meaning append at end)
+    if (insertBefore && container.contains(insertBefore)) {
+      container.insertBefore(card, insertBefore);
+    } else {
+      container.appendChild(card);
+    }
+
+    cardMap[displayPort] = { el: card, state };
+    insertBefore = card.nextSibling;
   }
 }
 
@@ -454,6 +603,46 @@ async function handleTunnel(port, isActive) {
   } catch (err) {
     alert('Network error — cannot reach switcher');
   }
+}
+
+async function handleStartServer(port) {
+  const key = Number(port);  // Normalize to number for consistent key type
+
+  try {
+    const resp = await fetch(`${API}/servers/${port}/start`, { method: 'POST' });
+    const data = await resp.json();
+    if (!data.ok) {
+      alert(data.error || 'Failed to start server');
+      return;
+    }
+  } catch (err) {
+    alert('Network error — cannot reach switcher');
+    return;
+  }
+
+  // Enter starting state — keyed by configuredPort (matches button data-port for down servers)
+  startingPorts[key] = { startTime: Date.now() };
+
+  // Fast-poll every 3s for up to 12s
+  const pollTimer = setInterval(() => {
+    fetchState();
+
+    const info = startingPorts[key];
+    if (!info) {
+      clearInterval(pollTimer);
+      return;
+    }
+
+    const elapsed = Date.now() - info.startTime;
+    if (elapsed >= 12000) {
+      clearInterval(pollTimer);
+      delete startingPorts[key];
+      fetchState();  // Final refresh to revert button
+    }
+  }, 3000);
+
+  startingPorts[key].timer = pollTimer;
+  fetchState();  // Immediate refresh to show "Starting..." state
 }
 
 function esc(s) {

@@ -1,12 +1,14 @@
 {
   "servers": [
-    { "name": "Codenomad",   "port": 9896 },
-    { "name": "Companion",   "port": 3470 },
-    { "name": "Ollama",      "port": 4000 },
-    { "name": "Vanforms",    "port": 8086 },
-    { "name": "Hub",         "port": 8099 },
-    { "name": "Thevanbot",   "port": 8787 },
-    { "name": "Openchamber", "port": 57123 }
+    { "name": "Codenomad",   "port": 9896,  "devScript": "E:/Van/Documents/GitHub/codenomad/dev.ps1" },
+    { "name": "Companion",   "port": 3457,  "devScript": "E:/Van/Documents/GitHub/companion/dev.ps1" },
+    { "name": "YtdL",      "port": 8000,  "devScript": 
+	"E:/Van/Documents/GitHub/ytdl-dash/dev.ps1" },
+    { "name": "Vanforms",    "port": 8086,  "devScript": "E:/Van/Documents/GitHub/vanforms/dev.ps1" },
+    { "name": "Hub",         "port": 8099,  "devScript": 
+	"E:/Van/Documents/GitHub/Powershell/entryScripts/Hub-Central.ps1" },
+    { "name": "Thevanbot",   "port": 8787,  "devScript": "E:/Van/Documents/GitHub/thevanbot/dev.ps1" },
+    { "name": "Openchamber", "port": 57123, "devScript": "E:/Van/Documents/GitHub/openchamber/dev.ps1", "devArgs": ["-build"] }
   ],
   "scanRange": 50,
   "switcherPort": 9595,
