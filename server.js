@@ -101,6 +101,69 @@ process.on('SIGINT', () => { stopNgrok(); process.exit(0); });
 process.on('SIGTERM', () => { stopNgrok(); process.exit(0); });
 process.on('exit', () => { stopNgrok(); });
 
+// ---- Scheduler ----
+const os = require('os');
+
+function resolveTilde(filePath) {
+  if (filePath.startsWith('~/') || filePath === '~') {
+    return path.join(os.homedir(), filePath.slice(1));
+  }
+  return filePath;
+}
+
+function getNestedValue(obj, dottedPath) {
+  const keys = dottedPath.split('.');
+  let current = obj;
+  for (const key of keys) {
+    if (current == null || typeof current !== 'object') return undefined;
+    current = current[key];
+  }
+  return current;
+}
+
+const SCHEDULER_CONFIG = CONFIG.scheduler || null;
+
+let schedulerState = {
+  enabled: SCHEDULER_CONFIG ? !!SCHEDULER_CONFIG.enabled : false,
+  minuteOffsets: SCHEDULER_CONFIG ? (SCHEDULER_CONFIG.minuteOffsets || [0]) : [],
+  prompt: SCHEDULER_CONFIG ? (SCHEDULER_CONFIG.prompt || 'hi') : 'hi',
+  targets: [],
+  lastFiredSlot: null,
+};
+
+if (SCHEDULER_CONFIG && SCHEDULER_CONFIG.targets) {
+  for (const t of SCHEDULER_CONFIG.targets) {
+    let credential = null;
+    let credentialError = null;
+    try {
+      const resolvedPath = resolveTilde(t.credentialPath);
+      const raw = fs.readFileSync(resolvedPath, 'utf8');
+      const parsed = JSON.parse(raw);
+      credential = getNestedValue(parsed, t.credentialKey);
+      if (typeof credential !== 'string' || credential.length === 0) {
+        credentialError = `Credential key "${t.credentialKey}" not found or empty`;
+        credential = null;
+      }
+    } catch (e) {
+      credentialError = e.message;
+    }
+    schedulerState.targets.push({
+      name: t.name,
+      type: t.type,
+      model: t.model,
+      credential,
+      credentialError,
+      lastRun: null,
+      status: credential ? 'pending' : 'error',
+      responsePreview: null,
+      error: credentialError,
+    });
+  }
+  console.log(`Scheduler: ${schedulerState.targets.length} target(s) loaded (${schedulerState.targets.filter(t => t.credential).length} with credentials)`);
+} else if (SCHEDULER_CONFIG) {
+  console.log('Scheduler: enabled but no targets configured');
+}
+
 // ---- Server Discovery & Health Check ----
 const SCAN_RANGE = CONFIG.scanRange || 50;
 let serverStatuses = {};  // { port: { name, configuredPort, actualPort, health, status } }
