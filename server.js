@@ -99,7 +99,7 @@ function stopNgrok() {
 
 process.on('SIGINT', () => { stopNgrok(); process.exit(0); });
 process.on('SIGTERM', () => { stopNgrok(); process.exit(0); });
-process.on('exit', () => { stopNgrok(); });
+process.on('exit', () => { stopNgrok(); stopScheduler(); });
 
 // ---- Scheduler ----
 const os = require('os');
@@ -277,6 +277,90 @@ function callCodex(target, prompt) {
     req.write(body);
     req.end();
   });
+}
+
+// ---- Scheduler time-keeping ----
+let schedulerTimer = null;
+
+function getSlotKey() {
+  const now = new Date();
+  return `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+}
+
+function computeNextFire() {
+  if (!schedulerState.enabled || schedulerState.minuteOffsets.length === 0) return null;
+  const now = new Date();
+  const currentMinute = now.getMinutes();
+  const sorted = [...schedulerState.minuteOffsets].sort((a, b) => a - b);
+  let nextOffset = sorted.find(o => o > currentMinute);
+  if (nextOffset === undefined) {
+    nextOffset = sorted[0];
+    now.setHours(now.getHours() + 1);
+  }
+  now.setMinutes(nextOffset, 0, 0);
+  return now.toISOString();
+}
+
+async function fireOneTarget(target, prompt) {
+  if (!target.credential) {
+    target.status = 'error';
+    target.error = target.credentialError || 'No credential';
+    target.lastRun = new Date().toISOString();
+    return;
+  }
+  try {
+    target.status = 'pending';
+    const response = await callAI(target, prompt);
+    target.status = 'success';
+    target.responsePreview = response;
+    target.error = null;
+  } catch (e) {
+    target.status = 'error';
+    target.error = e.message;
+    target.responsePreview = null;
+  }
+  target.lastRun = new Date().toISOString();
+}
+
+async function fireAllTargets() {
+  const slotKey = getSlotKey();
+  if (schedulerState.lastFiredSlot === slotKey) return;
+  const minute = new Date().getMinutes();
+  if (!schedulerState.minuteOffsets.includes(minute)) return;
+
+  // Guard: skip first second of a new minute to avoid race with tick timing
+  const second = new Date().getSeconds();
+  if (second < 1) return;
+
+  schedulerState.lastFiredSlot = slotKey;
+  console.log(`Scheduler: firing at ${slotKey}`);
+
+  // Fire all targets in parallel — one timeout does not block the other
+  await Promise.allSettled(
+    schedulerState.targets.map(t => fireOneTarget(t, schedulerState.prompt))
+  );
+}
+
+function startScheduler() {
+  if (!schedulerState.enabled) {
+    console.log('Scheduler: disabled — not starting');
+    return;
+  }
+  if (schedulerState.targets.length === 0) {
+    console.log('Scheduler: no targets — not starting');
+    return;
+  }
+  console.log(`Scheduler: started (offsets: ${schedulerState.minuteOffsets.join(', ')})`);
+  schedulerTimer = setInterval(() => {
+    fireAllTargets().catch(err => console.error('Scheduler tick error:', err));
+  }, 30000);
+}
+
+function stopScheduler() {
+  if (schedulerTimer) {
+    clearInterval(schedulerTimer);
+    schedulerTimer = null;
+  }
 }
 
 // ---- Server Discovery & Health Check ----

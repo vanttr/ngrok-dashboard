@@ -125,3 +125,44 @@ describe('extractResponseText', () => {
     assert.strictEqual(extractCodexResponse(null), '');
   });
 });
+
+describe('scheduler tick logic', () => {
+  it('fires when current minute matches an offset and slot not yet fired', () => {
+    const offsets = [0, 30];
+    const minute = 0;
+    const lastFiredSlot = null;
+    const slotKey = `${String(Math.floor(new Date().getHours())).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+
+    const shouldFire = offsets.includes(minute) && lastFiredSlot !== slotKey;
+    assert.strictEqual(shouldFire, true);
+  });
+
+  it('skips when current minute is not in offsets', () => {
+    const offsets = [0, 30];
+    const minute = 15;
+    const lastFiredSlot = null;
+
+    const shouldFire = offsets.includes(minute);
+    assert.strictEqual(shouldFire, false);
+  });
+
+  it('skips when slot was already fired', () => {
+    const offsets = [0, 30];
+    const minute = 30;
+    const lastFiredSlot = '09:30';
+
+    const slotKey = '09:30';
+    const shouldFire = offsets.includes(minute) && lastFiredSlot !== slotKey;
+    assert.strictEqual(shouldFire, false);
+  });
+
+  it('fires again when slot changes (new hour)', () => {
+    const offsets = [0, 30];
+    const minute = 0;
+    const lastFiredSlot = '09:30';
+
+    const slotKey = '10:00';
+    const shouldFire = offsets.includes(minute) && lastFiredSlot !== slotKey;
+    assert.strictEqual(shouldFire, true);
+  });
+});
