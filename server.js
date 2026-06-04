@@ -105,6 +105,21 @@ process.on('exit', () => { stopNgrok(); stopScheduler(); });
 
 // ---- Scheduler ----
 
+function wordWrap(s, width) {
+  if (!s || s.length <= width) return s;
+  const lines = [];
+  let remaining = s;
+  while (remaining.length > width) {
+    // Try to break at last space within width, otherwise hard-break
+    let breakAt = remaining.lastIndexOf(' ', width);
+    if (breakAt === -1 || breakAt < width / 2) breakAt = width;
+    lines.push(remaining.slice(0, breakAt));
+    remaining = remaining.slice(breakAt).trimStart();
+  }
+  if (remaining) lines.push(remaining);
+  return lines.join('\n');
+}
+
 function resolveTilde(filePath) {
   if (filePath.startsWith('~/') || filePath === '~') {
     return path.join(os.homedir(), filePath.slice(1));
@@ -165,7 +180,7 @@ if (SCHEDULER_CONFIG && SCHEDULER_CONFIG.targets) {
       console.log(`  "${t.name}" — credential OK (${t.credential.slice(0, 12)}...)`);
     } else {
       console.log(`  "${t.name}" — FAILED`);
-      console.log(`    reason: ${t.credentialError || 'unknown'}`);
+      console.log(`    reason: ${wordWrap(t.credentialError || 'unknown', 70)}`);
     }
   }
   const ok = schedulerState.targets.filter(t => t.credential).length;
@@ -362,10 +377,11 @@ async function fireAllTargets() {
   // Log per-target results
   for (const t of schedulerState.targets) {
     if (t.status === 'success') {
-      console.log(`  ${t.name}: OK\n    "${t.responsePreview}"`);
+      console.log(`  ${t.name}: OK`);
+      console.log(`    "${wordWrap(t.responsePreview || '', 70)}"`);
     } else {
       console.log(`  ${t.name}: FAIL`);
-      console.log(`    ${t.error || 'unknown error'}`);
+      console.log(`    ${wordWrap(t.error || 'unknown error', 70)}`);
     }
   }
 }
