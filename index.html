@@ -819,10 +819,14 @@ function renderScheduler(data) {
                         t.status === 'error' ? 'sch-error' : 'sch-pending';
     const statusLabel = t.status === 'success' ? 'Success' :
                         t.status === 'error' ? 'Error' : 'Pending';
+    const credOK = t.credentialOK !== false; // true or undefined (back-compat)
+    const credBadge = credOK
+      ? '<span style="color:var(--ok);font-size:0.7rem;vertical-align:middle;">●</span>'
+      : '<span style="color:var(--down);font-size:0.7rem;vertical-align:middle;">●</span>';
     const snippet = t.responsePreview ? esc(t.responsePreview) : (t.error ? esc(t.error) : '—');
     html += `
       <div class="scheduler-target-row">
-        <span class="scheduler-target-name">${esc(t.name)}</span>
+        <span class="scheduler-target-name">${credBadge} ${esc(t.name)}</span>
         <span class="scheduler-status-pill ${statusClass}">
           <span class="pill-dot"></span>${statusLabel}
         </span>

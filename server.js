@@ -171,6 +171,7 @@ if (SCHEDULER_CONFIG && SCHEDULER_CONFIG.targets) {
       credentialError,
       lastRun: null,
       status: credential ? 'pending' : 'error',
+      credentialOK: !!credential,
       responsePreview: null,
       error: credentialError,
     });
@@ -673,6 +674,7 @@ const server = http.createServer(async (req, res) => {
       prompt: schedulerState.prompt,
       targets: schedulerState.targets.map(t => ({
         name: t.name,
+        credentialOK: t.credentialOK,
         lastRun: t.lastRun,
         status: t.status,
         responsePreview: t.responsePreview,
