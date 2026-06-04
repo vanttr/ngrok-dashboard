@@ -461,6 +461,7 @@ const server = http.createServer(async (req, res) => {
   const isSwitcherApiRoute = pathname === '/api/servers' ||
     pathname === '/api/target' ||
     pathname === '/api/health' ||
+    pathname === '/api/scheduler' ||
     /^\/api\/servers\/\d+\/start$/.test(pathname);
 
   if (req.method === 'OPTIONS' && isSwitcherApiRoute) {
@@ -612,6 +613,26 @@ const server = http.createServer(async (req, res) => {
       uptime: process.uptime(),
       ngrokConnected: !!ngrokUrl,
       target: currentTarget,
+    }));
+    return;
+  }
+
+  if (pathname === '/api/scheduler') {
+    res.setHeader('Content-Type', 'application/json');
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.writeHead(200);
+    res.end(JSON.stringify({
+      enabled: schedulerState.enabled,
+      minuteOffsets: schedulerState.minuteOffsets,
+      nextFire: computeNextFire(),
+      prompt: schedulerState.prompt,
+      targets: schedulerState.targets.map(t => ({
+        name: t.name,
+        lastRun: t.lastRun,
+        status: t.status,
+        responsePreview: t.responsePreview,
+        error: t.error
+      }))
     }));
     return;
   }
