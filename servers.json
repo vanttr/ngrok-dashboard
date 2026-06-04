@@ -1,7 +1,7 @@
 {
   "servers": [
     { "name": "Codenomad",   "port": 9896,  "devScript": "E:/Van/Documents/GitHub/codenomad/dev.ps1" },
-    { "name": "companion",   "port": 25809,  "devScript": "E:/Van/Documents/GitHub/companion/dev.ps1" },
+    { "name": "companion",   "port": 3457,  "devScript": "E:/Van/Documents/GitHub/companion/dev.ps1" },
     { "name": "YtdL",      "port": 8000,  "devScript": 
 	"E:/Van/Documents/GitHub/ytdl-dash/dev.ps1" },
     { "name": "Vanforms",    "port": 8586,  "devScript": "E:/Van/Documents/GitHub/vanforms/dev.ps1" },
@@ -22,8 +22,8 @@
         "name": "Claude Code",
         "type": "claude",
         "model": "claude-sonnet-4-20250514",
-        "credentialPath": "~/.claude/.credentials.json",
-        "credentialKey": "claudeAiOauth.accessToken"
+        "credentialPath": "~/.claude/config.json",
+        "credentialKey": "primaryApiKey"
       },
       {
         "name": "Codex CLI",
