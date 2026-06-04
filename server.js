@@ -105,6 +105,11 @@ process.on('exit', () => { stopNgrok(); stopScheduler(); });
 
 // ---- Scheduler ----
 
+function truncate(s, max) {
+  if (!s) return s;
+  return s.length <= max ? s : s.slice(0, max) + '...';
+}
+
 function resolveTilde(filePath) {
   if (filePath.startsWith('~/') || filePath === '~') {
     return path.join(os.homedir(), filePath.slice(1));
@@ -146,7 +151,7 @@ if (SCHEDULER_CONFIG && SCHEDULER_CONFIG.targets) {
         credential = null;
       }
     } catch (e) {
-      credentialError = e.message;
+      credentialError = truncate(e.message, 150);
     }
     schedulerState.targets.push({
       name: t.name,
@@ -160,7 +165,16 @@ if (SCHEDULER_CONFIG && SCHEDULER_CONFIG.targets) {
       error: credentialError,
     });
   }
-  console.log(`Scheduler: ${schedulerState.targets.length} target(s) loaded (${schedulerState.targets.filter(t => t.credential).length} with credentials)`);
+  for (const t of schedulerState.targets) {
+    if (t.credential) {
+      console.log(`  Loaded "${t.name}" — credential OK (${t.credential.slice(0, 12)}...)`);
+    } else {
+      const shortErr = (t.credentialError || 'unknown').slice(0, 100);
+      console.log(`  ERROR loading "${t.name}" — ${shortErr}`);
+    }
+  }
+  const ok = schedulerState.targets.filter(t => t.credential).length;
+  console.log(`Scheduler: ${schedulerState.targets.length} target(s) — ${ok} OK, ${schedulerState.targets.length - ok} failed`);
 } else if (SCHEDULER_CONFIG) {
   console.log('Scheduler: enabled but no targets configured');
 }
@@ -204,7 +218,12 @@ function callClaude(target, prompt) {
       res.on('end', () => {
         const raw = Buffer.concat(chunks).toString('utf8');
         if (res.statusCode < 200 || res.statusCode >= 300) {
-          reject(new Error(`Claude API returned ${res.statusCode}: ${raw.slice(0, 200)}`));
+          let detail = `status ${res.statusCode}`;
+          try {
+            const errData = JSON.parse(raw);
+            detail = errData?.error?.message || errData?.error?.type || detail;
+          } catch {}
+          reject(new Error(`Claude API ${detail}`));
           return;
         }
         try {
@@ -255,7 +274,12 @@ function callCodex(target, prompt) {
       res.on('end', () => {
         const raw = Buffer.concat(chunks).toString('utf8');
         if (res.statusCode < 200 || res.statusCode >= 300) {
-          reject(new Error(`OpenAI API returned ${res.statusCode}: ${raw.slice(0, 200)}`));
+          let detail = `status ${res.statusCode}`;
+          try {
+            const errData = JSON.parse(raw);
+            detail = errData?.error?.message || errData?.error?.type || detail;
+          } catch {}
+          reject(new Error(`OpenAI API ${detail}`));
           return;
         }
         try {
@@ -316,7 +340,7 @@ async function fireOneTarget(target, prompt) {
     target.error = null;
   } catch (e) {
     target.status = 'error';
-    target.error = e.message;
+    target.error = truncate(e.message, 120);
     target.responsePreview = null;
   }
   target.lastRun = new Date().toISOString();
@@ -339,6 +363,16 @@ async function fireAllTargets() {
   await Promise.allSettled(
     schedulerState.targets.map(t => fireOneTarget(t, schedulerState.prompt))
   );
+
+  // Log per-target results
+  for (const t of schedulerState.targets) {
+    if (t.status === 'success') {
+      console.log(`  ${t.name}: OK — "${t.responsePreview}"`);
+    } else {
+      const shortErr = (t.error || 'unknown error').slice(0, 100);
+      console.log(`  ${t.name}: FAIL — ${shortErr}`);
+    }
+  }
 }
 
 function startScheduler() {
