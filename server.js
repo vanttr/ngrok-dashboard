@@ -164,6 +164,121 @@ if (SCHEDULER_CONFIG && SCHEDULER_CONFIG.targets) {
   console.log('Scheduler: enabled but no targets configured');
 }
 
+// ---- API call functions ----
+const https = require('https');
+
+function callAI(target, prompt) {
+  if (target.type === 'claude') {
+    return callClaude(target, prompt);
+  } else if (target.type === 'codex') {
+    return callCodex(target, prompt);
+  }
+  throw new Error(`Unknown target type: ${target.type}`);
+}
+
+function callClaude(target, prompt) {
+  const body = JSON.stringify({
+    model: target.model,
+    max_tokens: 100,
+    messages: [{ role: 'user', content: prompt }]
+  });
+
+  const options = {
+    hostname: 'api.anthropic.com',
+    port: 443,
+    path: '/v1/messages',
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': target.credential,
+      'anthropic-version': '2023-06-01',
+      'Content-Length': Buffer.byteLength(body)
+    },
+    timeout: 15000
+  };
+
+  return new Promise((resolve, reject) => {
+    const req = https.request(options, (res) => {
+      const chunks = [];
+      res.on('data', chunk => chunks.push(chunk));
+      res.on('end', () => {
+        const raw = Buffer.concat(chunks).toString('utf8');
+        if (res.statusCode < 200 || res.statusCode >= 300) {
+          reject(new Error(`Claude API returned ${res.statusCode}: ${raw.slice(0, 200)}`));
+          return;
+        }
+        try {
+          const data = JSON.parse(raw);
+          const text = data?.content?.[0]?.text;
+          if (typeof text !== 'string' || text.length === 0) {
+            reject(new Error('Claude returned empty response'));
+            return;
+          }
+          resolve(text.slice(0, 80));
+        } catch (e) {
+          reject(new Error(`Claude response parse error: ${e.message}`));
+        }
+      });
+    });
+
+    req.on('error', (err) => reject(new Error(`Claude network error: ${err.message}`)));
+    req.on('timeout', () => { req.destroy(); reject(new Error('Claude request timed out (15s)')); });
+    req.write(body);
+    req.end();
+  });
+}
+
+function callCodex(target, prompt) {
+  const body = JSON.stringify({
+    model: target.model,
+    max_tokens: 100,
+    messages: [{ role: 'user', content: prompt }]
+  });
+
+  const options = {
+    hostname: 'api.openai.com',
+    port: 443,
+    path: '/v1/chat/completions',
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${target.credential}`,
+      'Content-Length': Buffer.byteLength(body)
+    },
+    timeout: 15000
+  };
+
+  return new Promise((resolve, reject) => {
+    const req = https.request(options, (res) => {
+      const chunks = [];
+      res.on('data', chunk => chunks.push(chunk));
+      res.on('end', () => {
+        const raw = Buffer.concat(chunks).toString('utf8');
+        if (res.statusCode < 200 || res.statusCode >= 300) {
+          reject(new Error(`OpenAI API returned ${res.statusCode}: ${raw.slice(0, 200)}`));
+          return;
+        }
+        try {
+          const data = JSON.parse(raw);
+          const text = data?.choices?.[0]?.message?.content;
+          if (typeof text !== 'string' || text.length === 0) {
+            reject(new Error('OpenAI returned empty response'));
+            return;
+          }
+          resolve(text.slice(0, 80));
+        } catch (e) {
+          reject(new Error(`OpenAI response parse error: ${e.message}`));
+        }
+      });
+    });
+
+    req.on('error', (err) => reject(new Error(`OpenAI network error: ${err.message}`)));
+    req.on('timeout', () => { req.destroy(); reject(new Error('OpenAI request timed out (15s)')); });
+    req.write(body);
+    req.end();
+  });
+}
+
 // ---- Server Discovery & Health Check ----
 const SCAN_RANGE = CONFIG.scanRange || 50;
 let serverStatuses = {};  // { port: { name, configuredPort, actualPort, health, status } }

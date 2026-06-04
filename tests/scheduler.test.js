@@ -90,3 +90,38 @@ describe('loadCredential', () => {
     assert.ok(result.length > 10);
   });
 });
+
+describe('extractResponseText', () => {
+  function extractClaudeResponse(data) {
+    const text = data?.content?.[0]?.text;
+    return typeof text === 'string' ? text.slice(0, 80) : '';
+  }
+
+  function extractCodexResponse(data) {
+    const text = data?.choices?.[0]?.message?.content;
+    return typeof text === 'string' ? text.slice(0, 80) : '';
+  }
+
+  it('extracts Claude response text', () => {
+    const claudeResp = { content: [{ type: 'text', text: 'Hello! How can I help you today?' }] };
+    assert.strictEqual(extractClaudeResponse(claudeResp), 'Hello! How can I help you today?');
+  });
+
+  it('truncates Claude response to 80 chars', () => {
+    const long = 'A'.repeat(100);
+    const claudeResp = { content: [{ type: 'text', text: long }] };
+    assert.strictEqual(extractClaudeResponse(claudeResp).length, 80);
+  });
+
+  it('extracts Codex response text', () => {
+    const codexResp = { choices: [{ message: { content: 'Hi there!' } }] };
+    assert.strictEqual(extractCodexResponse(codexResp), 'Hi there!');
+  });
+
+  it('returns empty string for malformed response', () => {
+    assert.strictEqual(extractClaudeResponse({}), '');
+    assert.strictEqual(extractCodexResponse({}), '');
+    assert.strictEqual(extractClaudeResponse(null), '');
+    assert.strictEqual(extractCodexResponse(null), '');
+  });
+});
