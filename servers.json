@@ -1,10 +1,10 @@
 {
   "servers": [
     { "name": "Codenomad",   "port": 9896,  "devScript": "E:/Van/Documents/GitHub/codenomad/dev.ps1" },
-    { "name": "Companion",   "port": 3457,  "devScript": "E:/Van/Documents/GitHub/companion/dev.ps1" },
+    { "name": "companion",   "port": 25809,  "devScript": "E:/Van/Documents/GitHub/companion/dev.ps1" },
     { "name": "YtdL",      "port": 8000,  "devScript": 
 	"E:/Van/Documents/GitHub/ytdl-dash/dev.ps1" },
-    { "name": "Vanforms",    "port": 8086,  "devScript": "E:/Van/Documents/GitHub/vanforms/dev.ps1" },
+    { "name": "Vanforms",    "port": 8586,  "devScript": "E:/Van/Documents/GitHub/vanforms/dev.ps1" },
     { "name": "Hub",         "port": 8099,  "devScript": 
 	"E:/Van/Documents/GitHub/Powershell/entryScripts/Hub-Central.ps1" },
     { "name": "Thevanbot",   "port": 8787,  "devScript": "E:/Van/Documents/GitHub/thevanbot/dev.ps1" },
@@ -12,5 +12,26 @@
   ],
   "scanRange": 50,
   "switcherPort": 9595,
-  "healthIntervalMs": 10000
+  "healthIntervalMs": 10000,
+  "scheduler": {
+    "enabled": true,
+    "minuteOffsets": [0, 30],
+    "prompt": "hi",
+    "targets": [
+      {
+        "name": "Claude Code",
+        "type": "claude",
+        "model": "claude-sonnet-4-20250514",
+        "credentialPath": "~/.claude/config.json",
+        "credentialKey": "primaryApiKey"
+      },
+      {
+        "name": "Codex CLI",
+        "type": "codex",
+        "model": "gpt-5.4",
+        "credentialPath": "~/.codex/auth.json",
+        "credentialKey": "tokens.access_token"
+      }
+    ]
+  }
 }
