@@ -1,7 +1,9 @@
 // server.js — Ngrok Tunnel Switcher
 const { spawn } = require('child_process');
 const http = require('http');
+const https = require('https');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 
 // ---- Configuration ----
@@ -102,7 +104,6 @@ process.on('SIGTERM', () => { stopNgrok(); process.exit(0); });
 process.on('exit', () => { stopNgrok(); stopScheduler(); });
 
 // ---- Scheduler ----
-const os = require('os');
 
 function resolveTilde(filePath) {
   if (filePath.startsWith('~/') || filePath === '~') {
@@ -165,7 +166,6 @@ if (SCHEDULER_CONFIG && SCHEDULER_CONFIG.targets) {
 }
 
 // ---- API call functions ----
-const https = require('https');
 
 function callAI(target, prompt) {
   if (target.type === 'claude') {
@@ -944,6 +944,7 @@ async function main() {
 
   server.listen(SWITCHER_PORT, SWITCHER_HOST, () => {
     console.log(`Switcher listening on http://${SWITCHER_HOST}:${SWITCHER_PORT}`);
+    startScheduler();
   });
 }
 
