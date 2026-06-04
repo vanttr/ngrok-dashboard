@@ -542,6 +542,15 @@ async function fetchState() {
   } catch (err) {
     document.getElementById('ngrok-error').textContent = 'Cannot reach switcher';
   }
+
+  // Fetch scheduler state independently — failure doesn't affect server display
+  try {
+    const schedResp = await fetch(`${API}/scheduler`);
+    const schedData = await schedResp.json();
+    renderScheduler(schedData);
+  } catch (err) {
+    document.getElementById('scheduler-section').style.display = 'none';
+  }
 }
 
 function renderHeader(url, error) {
@@ -768,6 +777,62 @@ function esc(s) {
   return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'})[c]);
 }
 function escAttr(s) { return String(s).replace(/"/g, '&quot;'); }
+
+function timeAgo(isoStr) {
+  if (!isoStr) return 'never';
+  const diff = Date.now() - new Date(isoStr).getTime();
+  const seconds = Math.floor(diff / 1000);
+  if (seconds < 60) return 'just now';
+  const minutes = Math.floor(seconds / 60);
+  if (minutes === 1) return '1 min ago';
+  if (minutes < 60) return `${minutes} min ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours === 1) return '1 hr ago';
+  return `${hours} hr ago`;
+}
+
+function formatOffsets(offsets) {
+  return offsets.map(o => ':' + String(o).padStart(2, '0')).join(', ');
+}
+
+function formatNextFire(isoStr) {
+  if (!isoStr) return '--';
+  return new Date(isoStr).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+}
+
+function renderScheduler(data) {
+  const section = document.getElementById('scheduler-section');
+  if (!data || !data.enabled) {
+    section.style.display = 'none';
+    return;
+  }
+  section.style.display = '';
+
+  document.getElementById('sch-prompt').textContent = esc(data.prompt);
+  document.getElementById('sch-offsets').textContent = formatOffsets(data.minuteOffsets);
+  document.getElementById('sch-next').textContent = formatNextFire(data.nextFire);
+
+  const container = document.getElementById('scheduler-targets');
+  let html = '';
+  for (const t of data.targets) {
+    const statusClass = t.status === 'success' ? 'sch-success' :
+                        t.status === 'error' ? 'sch-error' : 'sch-pending';
+    const statusLabel = t.status === 'success' ? 'Success' :
+                        t.status === 'error' ? 'Error' : 'Pending';
+    const snippet = t.responsePreview ? esc(t.responsePreview) : (t.error ? esc(t.error) : '—');
+    html += `
+      <div class="scheduler-target-row">
+        <span class="scheduler-target-name">${esc(t.name)}</span>
+        <span class="scheduler-status-pill ${statusClass}">
+          <span class="pill-dot"></span>${statusLabel}
+        </span>
+        <span class="scheduler-target-time">${timeAgo(t.lastRun)}</span>
+        <span class="scheduler-target-snippet" title="${esc(t.responsePreview || t.error || '')}">${snippet}</span>
+      </div>
+    `;
+  }
+  container.innerHTML = html;
+}
 
 fetchState();
 setInterval(fetchState, 10000);
