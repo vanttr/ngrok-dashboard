@@ -22,8 +22,8 @@
         "name": "Claude Code",
         "type": "claude",
         "model": "claude-sonnet-4-20250514",
-        "credentialPath": "~/.claude/config.json",
-        "credentialKey": "primaryApiKey"
+        "credentialPath": "~/.claude/.credentials.json",
+        "credentialKey": "claudeAiOauth.accessToken"
       },
       {
         "name": "Codex CLI",
