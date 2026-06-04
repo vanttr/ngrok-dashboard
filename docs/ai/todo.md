@@ -1,17 +1,24 @@
 # Ngrok Dashboard - Running TODO
 
-Last updated: 2026-05-29 by Claude (round 2)
+Last updated: 2026-06-04 by Van + agent
 
-## Now
+## Scheduled AI Prompts
 
-(empty — round 3 fixes complete, live-verified)
+### Now
+- [ ] Plan: Complete dual-domain review and commit plan
 
-## Soon (this week)
+### Soon (this week)
+- [ ] Execute: Implement 8 tasks (config, credentials, scheduler, API calls, endpoint, dashboard UI, dashboard JS, integration)
 
+### Blocked
+(empty)
+
+## Unfeatured / backlog
+
+### Soon
 - [ ] Live-test auth login flow through ngrok tunnel
 
-## Later
-
+### Later
 - [ ] Consider adding request body size limit (currently unbounded)
 - [ ] Consider adding ngrok `--request-header-add` for extra auth layer on public computers
 
