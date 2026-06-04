@@ -105,11 +105,6 @@ process.on('exit', () => { stopNgrok(); stopScheduler(); });
 
 // ---- Scheduler ----
 
-function truncate(s, max) {
-  if (!s) return s;
-  return s.length <= max ? s : s.slice(0, max) + '...';
-}
-
 function resolveTilde(filePath) {
   if (filePath.startsWith('~/') || filePath === '~') {
     return path.join(os.homedir(), filePath.slice(1));
@@ -151,7 +146,7 @@ if (SCHEDULER_CONFIG && SCHEDULER_CONFIG.targets) {
         credential = null;
       }
     } catch (e) {
-      credentialError = truncate(e.message, 150);
+      credentialError = e.message;
     }
     schedulerState.targets.push({
       name: t.name,
@@ -167,10 +162,10 @@ if (SCHEDULER_CONFIG && SCHEDULER_CONFIG.targets) {
   }
   for (const t of schedulerState.targets) {
     if (t.credential) {
-      console.log(`  Loaded "${t.name}" — credential OK (${t.credential.slice(0, 12)}...)`);
+      console.log(`  "${t.name}" — credential OK (${t.credential.slice(0, 12)}...)`);
     } else {
-      const shortErr = (t.credentialError || 'unknown').slice(0, 100);
-      console.log(`  ERROR loading "${t.name}" — ${shortErr}`);
+      console.log(`  "${t.name}" — FAILED`);
+      console.log(`    reason: ${t.credentialError || 'unknown'}`);
     }
   }
   const ok = schedulerState.targets.filter(t => t.credential).length;
@@ -340,7 +335,7 @@ async function fireOneTarget(target, prompt) {
     target.error = null;
   } catch (e) {
     target.status = 'error';
-    target.error = truncate(e.message, 120);
+    target.error = e.message;
     target.responsePreview = null;
   }
   target.lastRun = new Date().toISOString();
@@ -367,10 +362,10 @@ async function fireAllTargets() {
   // Log per-target results
   for (const t of schedulerState.targets) {
     if (t.status === 'success') {
-      console.log(`  ${t.name}: OK — "${t.responsePreview}"`);
+      console.log(`  ${t.name}: OK\n    "${t.responsePreview}"`);
     } else {
-      const shortErr = (t.error || 'unknown error').slice(0, 100);
-      console.log(`  ${t.name}: FAIL — ${shortErr}`);
+      console.log(`  ${t.name}: FAIL`);
+      console.log(`    ${t.error || 'unknown error'}`);
     }
   }
 }
