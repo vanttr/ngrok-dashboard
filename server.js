@@ -229,9 +229,9 @@ function callAI(target, prompt) {
     // Codex auth tokens are ChatGPT web-session JWTs, not OpenAI API keys.
     // The OpenAI API rejects them with "quota exceeded". Use CLI directly instead.
     return callCodexCLI(prompt);
-  } else if (target.type === 'gemini') {
-    // Gemini uses Google OAuth tokens — CLI subprocess only.
-    return callGeminiCLI(prompt);
+  } else if (target.type === 'antigravity') {
+    // Antigravity uses Google OAuth tokens — CLI subprocess only.
+    return callAntigravityCLI(prompt);
   }
   throw new Error(`Unknown target type: ${target.type}`);
 }
@@ -513,15 +513,15 @@ function callCodexCLI(prompt) {
   });
 }
 
-// Gemini CLI: uses Google OAuth from `gemini login`.
-// Gemini API key is separate from the CLI's OAuth — CLI subprocess only.
-function callGeminiCLI(prompt) {
+// Antigravity CLI (Google): uses OAuth from `gemini login`.
+// The CLI is installed as @google/gemini-cli (branded as Antigravity internally).
+function callAntigravityCLI(prompt) {
   const { spawn } = require('child_process');
-  const geminiScript = path.join(os.homedir(), 'AppData', 'Roaming', 'npm',
+  const antigravityScript = path.join(os.homedir(), 'AppData', 'Roaming', 'npm',
     'node_modules', '@google', 'gemini-cli', 'bundle', 'gemini.js');
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [
-      geminiScript,
+      antigravityScript,
       '-p', prompt,
       '-y'           // auto-approve (non-interactive)
     ], {
@@ -536,19 +536,19 @@ function callGeminiCLI(prompt) {
 
     const timer = setTimeout(() => {
       child.kill('SIGTERM');
-      reject(new Error('Gemini CLI timed out (60s)'));
+      reject(new Error('Antigravity CLI timed out (60s)'));
     }, 60000);
 
     child.on('close', (code) => {
       clearTimeout(timer);
       if (code !== 0) {
         const detail = stderr.trim().slice(0, 200) || `exit code ${code}`;
-        reject(new Error(`Gemini CLI error: ${detail}`));
+        reject(new Error(`Antigravity CLI error: ${detail}`));
         return;
       }
       const text = stdout.trim();
       if (!text) {
-        reject(new Error('Gemini CLI returned empty response'));
+        reject(new Error('Antigravity CLI returned empty response'));
         return;
       }
       resolve(text);
@@ -557,9 +557,9 @@ function callGeminiCLI(prompt) {
     child.on('error', (err) => {
       clearTimeout(timer);
       if (err.code === 'ENOENT') {
-        reject(new Error(`Gemini CLI not found: node or gemini.js not accessible`));
+        reject(new Error(`Antigravity CLI not found: node or gemini.js not accessible`));
       } else {
-        reject(new Error(`Gemini CLI spawn error: ${err.message}`));
+        reject(new Error(`Antigravity CLI spawn error: ${err.message}`));
       }
     });
   });
@@ -588,8 +588,8 @@ function computeNextFire() {
 }
 
 async function fireOneTarget(target, prompt) {
-  // Codex and Gemini use CLI directly (have their own auth). Claude needs a credential for API fallback.
-  if (target.type !== 'codex' && target.type !== 'gemini' && !target.credential) {
+  // Codex and Antigravity use CLI directly (have their own auth). Claude needs a credential for API fallback.
+  if (target.type !== 'codex' && target.type !== 'antigravity' && !target.credential) {
     target.status = 'error';
     target.error = target.credentialError || 'No credential';
     target.lastRun = new Date().toISOString();
@@ -689,7 +689,7 @@ function startScheduler() {
   // Log resolved CLI paths so we can verify they're found
   console.log(`  claude CLI: ${resolveCliPath('claude')}`);
   console.log(`  codex CLI:  ${resolveCliPath('codex')}`);
-  console.log(`  gemini CLI: ${resolveCliPath('gemini')}`);
+  console.log(`  antigravity CLI: ${resolveCliPath('gemini')}`);
   console.log(`Scheduler: started (offsets: ${schedulerState.minuteOffsets.join(', ')})`);
   schedulerTimer = setInterval(() => {
     fireAllTargets().catch(err => console.error('Scheduler tick error:', err));

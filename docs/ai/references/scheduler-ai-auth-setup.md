@@ -1,6 +1,6 @@
 # Scheduler AI Auth Setup
 
-How to configure the scheduler to send prompts to Claude and Codex. Both use CLI subprocesses because the API endpoints don't accept subscription-based auth tokens.
+How to configure the scheduler to send prompts to Claude, Codex, and Antigravity. All three use CLI subprocesses because the API endpoints don't accept subscription-based auth tokens.
 
 ---
 
@@ -97,7 +97,9 @@ Server's `resolveCliPath(name)` checks:
 
 ---
 
-## Gemini CLI
+## Antigravity CLI (Google)
+
+The Antigravity CLI is Google's AI coding assistant, packaged as `@google/gemini-cli` on npm. The internal product name is "Antigravity" — the CLI command is `gemini`.
 
 ### Credential storage
 - **File:** `~/.gemini/oauth_creds.json`
@@ -119,8 +121,8 @@ Server's `resolveCliPath(name)` checks:
 ### servers.json config
 ```json
 {
-  "name": "Gemini CLI",
-  "type": "gemini",
+  "name": "Antigravity CLI",
+  "type": "antigravity",
   "model": "gemini-2.5-pro",
   "credentialPath": "~/.gemini/oauth_creds.json",
   "credentialKey": "access_token"

@@ -1,5 +1,6 @@
 {
   "servers": [
+    { "name": "aionui",   "port": 25809,  "devScript": "E:/Van/Documents/GitHub/aionui/dev.ps1" }, 
     { "name": "Codenomad",   "port": 9896,  "devScript": "E:/Van/Documents/GitHub/codenomad/dev.ps1" },
     { "name": "companion",   "port": 3457,  "devScript": "E:/Van/Documents/GitHub/companion/dev.ps1" },
     { "name": "YtdL",      "port": 8000,  "devScript": 
@@ -8,7 +9,8 @@
     { "name": "Hub",         "port": 8099,  "devScript": 
 	"E:/Van/Documents/GitHub/Powershell/entryScripts/Hub-Central.ps1" },
     { "name": "Thevanbot",   "port": 8787,  "devScript": "E:/Van/Documents/GitHub/thevanbot/dev.ps1" },
-    { "name": "Openchamber", "port": 57123, "devScript": "E:/Van/Documents/GitHub/openchamber/dev.ps1", "devArgs": ["-build"] }
+    { "name": "Openchamber", "port": 57123, "devScript": "E:/Van/Documents/GitHub/openchamber/dev.ps1" },
+	{ "name": "test", "port": 98765, "devScript": "E:/Van/Documents/GitHub/openchamber/dev123.ps1", "devArgs": ["-build"] }
   ],
   "scanRange": 50,
   "switcherPort": 9595,
@@ -34,8 +36,8 @@
         "credentialKey": "tokens.access_token"
       },
       {
-        "name": "Gemini CLI",
-        "type": "gemini",
+        "name": "Antigravity CLI",
+        "type": "antigravity",
         "model": "gemini-2.5-pro",
         "credentialPath": "~/.gemini/oauth_creds.json",
         "credentialKey": "access_token"
