@@ -416,9 +416,11 @@
     font-style: italic;
     flex: 1;
     min-width: 180px;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    white-space: pre-wrap;
+    word-break: break-word;
+    line-height: 1.5;
+    max-height: 8em;
+    overflow-y: auto;
   }
 
   .scheduler-status-pill {

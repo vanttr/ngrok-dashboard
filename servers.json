@@ -16,14 +16,15 @@
   "scheduler": {
     "enabled": true,
     "minuteOffsets": [0, 30],
-    "prompt": "hi",
+    "prompt": "respond with 'hi' only",
     "targets": [
       {
         "name": "Claude Code",
         "type": "claude",
         "model": "claude-sonnet-4-20250514",
         "credentialPath": "~/.claude/config.json",
-        "credentialKey": "primaryApiKey"
+        "credentialKey": "primaryApiKey",
+        "fallbackKeys": ["oauthToken", "accessToken", "token"]
       },
       {
         "name": "Codex CLI",
@@ -31,6 +32,13 @@
         "model": "gpt-5.4",
         "credentialPath": "~/.codex/auth.json",
         "credentialKey": "tokens.access_token"
+      },
+      {
+        "name": "Gemini CLI",
+        "type": "gemini",
+        "model": "gemini-2.5-pro",
+        "credentialPath": "~/.gemini/oauth_creds.json",
+        "credentialKey": "access_token"
       }
     ]
   }

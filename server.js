@@ -120,6 +120,19 @@ function wordWrap(s, width) {
   return lines.join('\n');
 }
 
+// Auto-detect the auth header type from the credential value or config field.
+// "api-key" tokens start with "sk-ant-api" — use x-api-key header.
+// "bearer" tokens (OAuth from web login) start with "sk-ant-oat" or are JWT-like.
+function detectCredentialType(value) {
+  if (!value || typeof value !== 'string') return 'api-key';
+  if (value.startsWith('sk-ant-api')) return 'api-key';
+  if (value.startsWith('sk-ant-oat')) return 'bearer';
+  if (value.startsWith('sk-')) return 'api-key'; // generic sk- prefix → api-key
+  // JWT-like tokens (eyJ...) or long random strings → bearer
+  if (value.startsWith('eyJ') || value.length > 200) return 'bearer';
+  return 'api-key';
+}
+
 function resolveTilde(filePath) {
   if (filePath.startsWith('~/') || filePath === '~') {
     return path.join(os.homedir(), filePath.slice(1));
@@ -151,23 +164,40 @@ if (SCHEDULER_CONFIG && SCHEDULER_CONFIG.targets) {
   for (const t of SCHEDULER_CONFIG.targets) {
     let credential = null;
     let credentialError = null;
+    let credentialType = (t.credentialType && t.credentialType !== 'auto') ? t.credentialType : null; // explicit override from config, 'auto' means detect
     try {
       const resolvedPath = resolveTilde(t.credentialPath);
       const raw = fs.readFileSync(resolvedPath, 'utf8');
       const parsed = JSON.parse(raw);
-      credential = getNestedValue(parsed, t.credentialKey);
-      if (typeof credential !== 'string' || credential.length === 0) {
-        credentialError = `Credential key "${t.credentialKey}" not found or empty`;
+
+      // Try primary key first, then fallback keys if empty
+      const keysToTry = [t.credentialKey, ...(t.fallbackKeys || ['oauthToken', 'accessToken', 'token'])];
+      for (const key of keysToTry) {
+        credential = getNestedValue(parsed, key);
+        if (typeof credential === 'string' && credential.length > 0) {
+          if (!credentialType) credentialType = detectCredentialType(credential);
+          break;
+        }
         credential = null;
+      }
+
+      if (!credential) {
+        credentialError = `No credential found. Tried keys: ${keysToTry.join(', ')}`;
       }
     } catch (e) {
       credentialError = e.message;
     }
+
+    // Resolve credential type: explicit config wins, else detect from value
+    if (!credentialType && credential) credentialType = detectCredentialType(credential);
+    if (!credentialType) credentialType = 'api-key'; // default
+
     schedulerState.targets.push({
       name: t.name,
       type: t.type,
       model: t.model,
       credential,
+      credentialType,
       credentialError,
       lastRun: null,
       status: credential ? 'pending' : 'error',
@@ -178,7 +208,7 @@ if (SCHEDULER_CONFIG && SCHEDULER_CONFIG.targets) {
   }
   for (const t of schedulerState.targets) {
     if (t.credential) {
-      console.log(`  "${t.name}" — credential OK (${t.credential.slice(0, 12)}...)`);
+      console.log(`  "${t.name}" — credential OK (${t.credentialType}, ${t.credential.slice(0, 12)}...)`);
     } else {
       console.log(`  "${t.name}" — FAILED`);
       console.log(`    reason: ${wordWrap(t.credentialError || 'unknown', 70)}`);
@@ -196,7 +226,12 @@ function callAI(target, prompt) {
   if (target.type === 'claude') {
     return callClaude(target, prompt);
   } else if (target.type === 'codex') {
-    return callCodex(target, prompt);
+    // Codex auth tokens are ChatGPT web-session JWTs, not OpenAI API keys.
+    // The OpenAI API rejects them with "quota exceeded". Use CLI directly instead.
+    return callCodexCLI(prompt);
+  } else if (target.type === 'gemini') {
+    // Gemini uses Google OAuth tokens — CLI subprocess only.
+    return callGeminiCLI(prompt);
   }
   throw new Error(`Unknown target type: ${target.type}`);
 }
@@ -204,9 +239,17 @@ function callAI(target, prompt) {
 function callClaude(target, prompt) {
   const body = JSON.stringify({
     model: target.model,
-    max_tokens: 100,
+    max_tokens: 500,
     messages: [{ role: 'user', content: prompt }]
   });
+
+  // Use x-api-key for API key auth, Authorization: Bearer for OAuth tokens
+  const authHeaders = {};
+  if (target.credentialType === 'bearer') {
+    authHeaders['Authorization'] = `Bearer ${target.credential}`;
+  } else {
+    authHeaders['x-api-key'] = target.credential;
+  }
 
   const options = {
     hostname: 'api.anthropic.com',
@@ -215,11 +258,11 @@ function callClaude(target, prompt) {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'x-api-key': target.credential,
+      ...authHeaders,
       'anthropic-version': '2023-06-01',
       'Content-Length': Buffer.byteLength(body)
     },
-    timeout: 15000
+    timeout: 30000
   };
 
   return new Promise((resolve, reject) => {
@@ -244,7 +287,7 @@ function callClaude(target, prompt) {
             reject(new Error('Claude returned empty response'));
             return;
           }
-          resolve(text.slice(0, 80));
+          resolve(text);
         } catch (e) {
           reject(new Error(`Claude response parse error: ${e.message}`));
         }
@@ -252,7 +295,7 @@ function callClaude(target, prompt) {
     });
 
     req.on('error', (err) => reject(new Error(`Claude network error: ${err.message}`)));
-    req.on('timeout', () => { req.destroy(); reject(new Error('Claude request timed out (15s)')); });
+    req.on('timeout', () => { req.destroy(); reject(new Error('Claude request timed out (30s)')); });
     req.write(body);
     req.end();
   });
@@ -261,7 +304,7 @@ function callClaude(target, prompt) {
 function callCodex(target, prompt) {
   const body = JSON.stringify({
     model: target.model,
-    max_tokens: 100,
+    max_tokens: 500,
     messages: [{ role: 'user', content: prompt }]
   });
 
@@ -275,7 +318,7 @@ function callCodex(target, prompt) {
       'Authorization': `Bearer ${target.credential}`,
       'Content-Length': Buffer.byteLength(body)
     },
-    timeout: 15000
+    timeout: 30000
   };
 
   return new Promise((resolve, reject) => {
@@ -286,11 +329,15 @@ function callCodex(target, prompt) {
         const raw = Buffer.concat(chunks).toString('utf8');
         if (res.statusCode < 200 || res.statusCode >= 300) {
           let detail = `status ${res.statusCode}`;
+          let errorCode = null;
           try {
             const errData = JSON.parse(raw);
+            errorCode = errData?.error?.code || null;
             detail = errData?.error?.message || errData?.error?.type || detail;
           } catch {}
-          reject(new Error(`OpenAI API ${detail}`));
+          // Include HTTP status + error code for easier diagnosis
+          const suffix = errorCode ? ` (code: ${errorCode})` : '';
+          reject(new Error(`OpenAI API ${detail}${suffix}`));
           return;
         }
         try {
@@ -300,7 +347,7 @@ function callCodex(target, prompt) {
             reject(new Error('OpenAI returned empty response'));
             return;
           }
-          resolve(text.slice(0, 80));
+          resolve(text);
         } catch (e) {
           reject(new Error(`OpenAI response parse error: ${e.message}`));
         }
@@ -308,9 +355,213 @@ function callCodex(target, prompt) {
     });
 
     req.on('error', (err) => reject(new Error(`OpenAI network error: ${err.message}`)));
-    req.on('timeout', () => { req.destroy(); reject(new Error('OpenAI request timed out (15s)')); });
+    req.on('timeout', () => { req.destroy(); reject(new Error('OpenAI request timed out (30s)')); });
     req.write(body);
     req.end();
+  });
+}
+
+// Resolve full path to a globally-installed npm CLI tool (e.g. claude, codex).
+// Server processes may not inherit the user's terminal PATH on Windows.
+// Prefers .exe (can run without shell), falls back to .cmd/.ps1 (needs shell).
+function resolveCliPath(name) {
+  const candidates = [];
+
+  // Home .local/bin (common for standalone exe installs like Claude)
+  candidates.push(path.join(os.homedir(), '.local', 'bin', `${name}.exe`));
+  candidates.push(path.join(os.homedir(), '.local', 'bin', `${name}.cmd`));
+  candidates.push(path.join(os.homedir(), '.local', 'bin', name));
+
+  // npm global bin (Windows: %APPDATA%/npm)
+  const npmBin = path.join(os.homedir(), 'AppData', 'Roaming', 'npm');
+  candidates.push(path.join(npmBin, `${name}.exe`));
+  candidates.push(path.join(npmBin, `${name}.cmd`));
+  candidates.push(path.join(npmBin, `${name}.ps1`));
+  candidates.push(path.join(npmBin, name));
+
+  for (const p of candidates) {
+    try {
+      if (fs.existsSync(p)) return p;
+    } catch {}
+  }
+  // Fallback: hope it's in PATH
+  return name;
+}
+
+// Check if a path requires a shell to execute on Windows (.cmd/.ps1/.bat wrappers)
+function needsShell(filePath) {
+  const ext = path.extname(filePath).toLowerCase();
+  return ext === '.cmd' || ext === '.ps1' || ext === '.bat';
+}
+
+// Fallback: use the `claude` CLI tool directly (uses OAuth/subscription auth from `claude login`).
+// Useful when the API key has no credits but the user has an active subscription.
+// Uses async spawn to avoid blocking the event loop.
+function callClaudeCLI(prompt) {
+  const { spawn } = require('child_process');
+  const claudePath = resolveCliPath('claude');
+  return new Promise((resolve, reject) => {
+    const child = spawn(claudePath, [
+      '-p', prompt,
+      '--print',
+      '--output-format', 'text'
+    ], {
+      windowsHide: true,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      shell: needsShell(claudePath)
+    });
+
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (chunk) => { stdout += chunk.toString(); });
+    child.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
+
+    const timer = setTimeout(() => {
+      child.kill('SIGTERM');
+      reject(new Error('Claude CLI timed out (90s)'));
+    }, 90000);
+
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      if (code !== 0) {
+        const detail = stderr.trim().slice(0, 200) || `exit code ${code}`;
+        reject(new Error(`Claude CLI error: ${detail}`));
+        return;
+      }
+      const text = stdout.trim();
+      if (!text) {
+        reject(new Error('Claude CLI returned empty response'));
+        return;
+      }
+      resolve(text);
+    });
+
+    child.on('error', (err) => {
+      clearTimeout(timer);
+      if (err.code === 'ENOENT') {
+        reject(new Error(`Claude CLI not found: 'claude' command not in PATH`));
+      } else {
+        reject(new Error(`Claude CLI spawn error: ${err.message}`));
+      }
+    });
+  });
+}
+
+// Codex CLI: uses ChatGPT subscription auth (Google OAuth) from `codex login`.
+// The OpenAI API rejects ChatGPT web-session tokens — CLI is the only working path.
+// Calls codex.js directly with node.exe; discards stdout (goes to -o file) to avoid
+// buffering issues with the large JSONL output.
+function callCodexCLI(prompt) {
+  const { spawn } = require('child_process');
+  const codexScript = path.join(os.homedir(), 'AppData', 'Roaming', 'npm',
+    'node_modules', '@openai', 'codex', 'bin', 'codex.js');
+  return new Promise((resolve, reject) => {
+    const tmpFile = path.join(__dirname, '.tmp', `codex-output-${Date.now()}.txt`);
+    const child = spawn(process.execPath, [
+      codexScript,
+      'exec', prompt,
+      '--json',
+      '-o', tmpFile,
+      '--ephemeral',
+      '--skip-git-repo-check',
+      '--color', 'never'
+    ], {
+      windowsHide: true,
+      stdio: ['ignore', 'ignore', 'pipe']  // discard stdout, keep stderr
+    });
+
+    let stderr = '';
+    child.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
+
+    const timer = setTimeout(() => {
+      child.kill('SIGTERM');
+      try { fs.unlinkSync(tmpFile); } catch {}
+      reject(new Error('Codex CLI timed out (60s)'));
+    }, 60000);
+
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      if (code !== 0) {
+        try { fs.unlinkSync(tmpFile); } catch {}
+        const detail = stderr.trim().slice(0, 200) || `exit code ${code}`;
+        reject(new Error(`Codex CLI error: ${detail}`));
+        return;
+      }
+      try {
+        const text = fs.readFileSync(tmpFile, 'utf8').trim();
+        fs.unlinkSync(tmpFile);
+        if (!text) {
+          reject(new Error('Codex CLI returned empty response'));
+          return;
+        }
+        resolve(text);
+      } catch (e) {
+        try { fs.unlinkSync(tmpFile); } catch {}
+        reject(new Error(`Codex CLI output read error: ${e.message}`));
+      }
+    });
+
+    child.on('error', (err) => {
+      clearTimeout(timer);
+      try { fs.unlinkSync(tmpFile); } catch {}
+      if (err.code === 'ENOENT') {
+        reject(new Error(`Codex CLI not found: node or codex.js not accessible`));
+      } else {
+        reject(new Error(`Codex CLI spawn error: ${err.message}`));
+      }
+    });
+  });
+}
+
+// Gemini CLI: uses Google OAuth from `gemini login`.
+// Gemini API key is separate from the CLI's OAuth — CLI subprocess only.
+function callGeminiCLI(prompt) {
+  const { spawn } = require('child_process');
+  const geminiScript = path.join(os.homedir(), 'AppData', 'Roaming', 'npm',
+    'node_modules', '@google', 'gemini-cli', 'bundle', 'gemini.js');
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [
+      geminiScript,
+      '-p', prompt,
+      '-y'           // auto-approve (non-interactive)
+    ], {
+      windowsHide: true,
+      stdio: ['ignore', 'pipe', 'pipe']
+    });
+
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (chunk) => { stdout += chunk.toString(); });
+    child.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
+
+    const timer = setTimeout(() => {
+      child.kill('SIGTERM');
+      reject(new Error('Gemini CLI timed out (60s)'));
+    }, 60000);
+
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      if (code !== 0) {
+        const detail = stderr.trim().slice(0, 200) || `exit code ${code}`;
+        reject(new Error(`Gemini CLI error: ${detail}`));
+        return;
+      }
+      const text = stdout.trim();
+      if (!text) {
+        reject(new Error('Gemini CLI returned empty response'));
+        return;
+      }
+      resolve(text);
+    });
+
+    child.on('error', (err) => {
+      clearTimeout(timer);
+      if (err.code === 'ENOENT') {
+        reject(new Error(`Gemini CLI not found: node or gemini.js not accessible`));
+      } else {
+        reject(new Error(`Gemini CLI spawn error: ${err.message}`));
+      }
+    });
   });
 }
 
@@ -337,7 +588,8 @@ function computeNextFire() {
 }
 
 async function fireOneTarget(target, prompt) {
-  if (!target.credential) {
+  // Codex and Gemini use CLI directly (have their own auth). Claude needs a credential for API fallback.
+  if (target.type !== 'codex' && target.type !== 'gemini' && !target.credential) {
     target.status = 'error';
     target.error = target.credentialError || 'No credential';
     target.lastRun = new Date().toISOString();
@@ -349,23 +601,61 @@ async function fireOneTarget(target, prompt) {
     target.status = 'success';
     target.responsePreview = response;
     target.error = null;
-  } catch (e) {
-    target.status = 'error';
-    target.error = e.message;
-    target.responsePreview = null;
+  } catch (apiErr) {
+    // If API call fails and this is a Claude target, try CLI fallback
+    if (target.type === 'claude') {
+      try {
+        console.log(`  "${target.name}" — API failed, trying CLI fallback...`);
+        const cliResponse = await callClaudeCLI(prompt);
+        target.status = 'success';
+        target.responsePreview = cliResponse;
+        target.error = null;
+        target.lastRun = new Date().toISOString();
+        return;
+      } catch (cliErr) {
+        target.status = 'error';
+        target.error = `API: ${apiErr.message}; CLI: ${cliErr.message}`;
+        target.responsePreview = null;
+      }
+    } else {
+      target.status = 'error';
+      target.error = apiErr.message;
+      target.responsePreview = null;
+    }
   }
   target.lastRun = new Date().toISOString();
 }
 
-async function fireAllTargets() {
-  const slotKey = getSlotKey();
-  if (schedulerState.lastFiredSlot === slotKey) return;
-  const minute = new Date().getMinutes();
-  if (!schedulerState.minuteOffsets.includes(minute)) return;
+// Tick counter for heartbeat — log every 60th tick (~30 min) even when idle
+let _schedulerTickCount = 0;
+const SCHEDULER_DEBUG = !!process.env.SCHEDULER_DEBUG;
 
-  // Guard: skip first second of a new minute to avoid race with tick timing
+async function fireAllTargets(force = false) {
+  _schedulerTickCount++;
+  const slotKey = getSlotKey();
+  const minute = new Date().getMinutes();
   const second = new Date().getSeconds();
-  if (second < 1) return;
+
+  // Heartbeat: log every ~30 min (60 ticks) even when idle, so we know the timer is alive
+  if (_schedulerTickCount % 60 === 0) {
+    console.log(`Scheduler: heartbeat tick #${_schedulerTickCount}, slot=${slotKey}, minute=${minute}, lastFired=${schedulerState.lastFiredSlot || 'never'}`);
+  }
+
+  if (!force) {
+    if (schedulerState.lastFiredSlot === slotKey) {
+      if (SCHEDULER_DEBUG) console.log(`Scheduler: skip — slot ${slotKey} already fired`);
+      return;
+    }
+    if (!schedulerState.minuteOffsets.includes(minute)) {
+      if (SCHEDULER_DEBUG) console.log(`Scheduler: skip — minute ${minute} not in offsets [${schedulerState.minuteOffsets.join(',')}]`);
+      return;
+    }
+    // Guard: skip first second of a new minute to avoid race with tick timing
+    if (second < 1) {
+      if (SCHEDULER_DEBUG) console.log(`Scheduler: skip — second ${second} too early, waiting for next tick`);
+      return;
+    }
+  }
 
   schedulerState.lastFiredSlot = slotKey;
   console.log(`Scheduler: firing at ${slotKey}`);
@@ -379,7 +669,7 @@ async function fireAllTargets() {
   for (const t of schedulerState.targets) {
     if (t.status === 'success') {
       console.log(`  ${t.name}: OK`);
-      console.log(`    "${wordWrap(t.responsePreview || '', 70)}"`);
+      console.log(`    "${t.responsePreview || ''}"`);
     } else {
       console.log(`  ${t.name}: FAIL`);
       console.log(`    ${wordWrap(t.error || 'unknown error', 70)}`);
@@ -396,6 +686,10 @@ function startScheduler() {
     console.log('Scheduler: no targets — not starting');
     return;
   }
+  // Log resolved CLI paths so we can verify they're found
+  console.log(`  claude CLI: ${resolveCliPath('claude')}`);
+  console.log(`  codex CLI:  ${resolveCliPath('codex')}`);
+  console.log(`  gemini CLI: ${resolveCliPath('gemini')}`);
   console.log(`Scheduler: started (offsets: ${schedulerState.minuteOffsets.join(', ')})`);
   schedulerTimer = setInterval(() => {
     fireAllTargets().catch(err => console.error('Scheduler tick error:', err));
@@ -508,6 +802,7 @@ const server = http.createServer(async (req, res) => {
     pathname === '/api/target' ||
     pathname === '/api/health' ||
     pathname === '/api/scheduler' ||
+    pathname === '/api/scheduler/fire' ||
     /^\/api\/servers\/\d+\/start$/.test(pathname);
 
   if (req.method === 'OPTIONS' && isSwitcherApiRoute) {
@@ -681,6 +976,21 @@ const server = http.createServer(async (req, res) => {
         error: t.error
       }))
     }));
+    return;
+  }
+
+  // Manual fire — triggers a scheduler run immediately (POST only)
+  if (pathname === '/api/scheduler/fire' && req.method === 'POST') {
+    console.log('Scheduler: manual fire requested');
+    fireAllTargets(true).then(() => {
+      console.log('Scheduler: manual fire complete');
+    }).catch(err => {
+      console.error('Scheduler: manual fire error:', err);
+    });
+    res.setHeader('Content-Type', 'application/json');
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.writeHead(202);
+    res.end(JSON.stringify({ ok: true, message: 'Fire triggered' }));
     return;
   }
 

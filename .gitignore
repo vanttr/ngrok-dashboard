@@ -2,11 +2,19 @@
 node_modules/
 package-lock.json
 
-# Temp / working directories
+# Temp / working directories (use .tmp/ only — no scattered temp dirs)
 .tmp/
 .codenomad/
 test-results/
 test-screenshots/
+.test-screenshots/
+.test-scripts/
+
+# Playwright artifacts
+playwright-report/
+test-results/
+*.png
+!docs/**/*.png
 
 # Server logs
 server-stdout.txt

@@ -94,12 +94,12 @@ describe('loadCredential', () => {
 describe('extractResponseText', () => {
   function extractClaudeResponse(data) {
     const text = data?.content?.[0]?.text;
-    return typeof text === 'string' ? text.slice(0, 80) : '';
+    return typeof text === 'string' ? text : '';
   }
 
   function extractCodexResponse(data) {
     const text = data?.choices?.[0]?.message?.content;
-    return typeof text === 'string' ? text.slice(0, 80) : '';
+    return typeof text === 'string' ? text : '';
   }
 
   it('extracts Claude response text', () => {
@@ -107,10 +107,10 @@ describe('extractResponseText', () => {
     assert.strictEqual(extractClaudeResponse(claudeResp), 'Hello! How can I help you today?');
   });
 
-  it('truncates Claude response to 80 chars', () => {
-    const long = 'A'.repeat(100);
+  it('returns full Claude response without truncation', () => {
+    const long = 'A'.repeat(200);
     const claudeResp = { content: [{ type: 'text', text: long }] };
-    assert.strictEqual(extractClaudeResponse(claudeResp).length, 80);
+    assert.strictEqual(extractClaudeResponse(claudeResp).length, 200);
   });
 
   it('extracts Codex response text', () => {
