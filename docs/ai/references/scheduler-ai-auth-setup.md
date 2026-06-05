@@ -99,31 +99,34 @@ Server's `resolveCliPath(name)` checks:
 
 ## Antigravity CLI (Google)
 
-The Antigravity CLI is Google's AI coding assistant, packaged as `@google/gemini-cli` on npm. The internal product name is "Antigravity" — the CLI command is `gemini`.
+The Antigravity CLI is Google's AI coding assistant. The binary is `agy` (v1.0.5), a standalone Go executable installed at `%LOCALAPPDATA%/agy/bin/agy.exe`. It replaces the older npm-based `@google/gemini-cli` package.
 
 ### Credential storage
 - **File:** `~/.gemini/oauth_creds.json`
 - **Key:** `access_token`
-- **IMPORTANT:** This is a Google OAuth token (`ya29....`). It does NOT work as a Gemini API key. The CLI uses OAuth, not API keys.
+- **Auth method:** OAuth via Windows keyring (Credential Manager) — stored separately from the JSON file
+- **IMPORTANT:** This is a Google OAuth token (`ya29....`). It does NOT work as a Gemini API key.
 
 ### How it works
 1. Server loads the OAuth token from config (for status display)
 2. **Skips API entirely** — uses CLI subprocess only
-3. CLI command: `node "<npm-global>/@google/gemini-cli/bundle/gemini.js" -p "<prompt>" -y`
-4. `-y` flag enables auto-approve (non-interactive mode)
-5. Response captured from stdout
+3. CLI command: `agy -p "<prompt>" --dangerously-skip-permissions --print-timeout 60s`
+4. `--dangerously-skip-permissions` auto-approves tool calls (non-interactive mode)
+5. **agy writes responses to TUI, not stdout** — server extracts the response from the SQLite conversation DB (`~/.gemini/antigravity-cli/conversations/{id}.db`) after agy exits
+6. The `steps` table stores protobuf-encoded step payloads; field 1 contains the model's response text
 
 ### Prerequisites
-- `gemini` CLI installed globally: `npm i -g @google/gemini-cli`
-- Authenticated: `gemini login` (Google OAuth)
-- Script path: `%APPDATA%/npm/node_modules/@google/gemini-cli/bundle/gemini.js`
+- `agy` CLI installed: `agy install` (or downloaded from Google)
+- Authenticated: `agy` uses OAuth via Windows keyring (login handled by the CLI)
+- Binary path: `%LOCALAPPDATA%/agy/bin/agy.exe` (must be on PATH)
+- Node dependency: `better-sqlite3` (for reading conversation DBs)
 
 ### servers.json config
 ```json
 {
   "name": "Antigravity CLI",
   "type": "antigravity",
-  "model": "gemini-2.5-pro",
+  "model": "Gemini 3.5 Flash",
   "credentialPath": "~/.gemini/oauth_creds.json",
   "credentialKey": "access_token"
 }

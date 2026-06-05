@@ -12,5 +12,8 @@
   },
   "devDependencies": {
     "@playwright/test": "^1.60.0"
+  },
+  "dependencies": {
+    "better-sqlite3": "^12.10.0"
   }
 }

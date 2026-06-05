@@ -513,25 +513,32 @@ function callCodexCLI(prompt) {
   });
 }
 
-// Antigravity CLI (Google): uses OAuth from `gemini login`.
-// The CLI is installed as @google/gemini-cli (branded as Antigravity internally).
+// Antigravity CLI (agy): standalone Go binary at %LOCALAPPDATA%/agy/bin/agy.exe.
+// Uses OAuth via Windows keyring. Response goes to TUI, not stdout, so we
+// extract it from the SQLite conversation DB that agy writes on exit.
 function callAntigravityCLI(prompt) {
   const { spawn } = require('child_process');
-  const antigravityScript = path.join(os.homedir(), 'AppData', 'Roaming', 'npm',
-    'node_modules', '@google', 'gemini-cli', 'bundle', 'gemini.js');
+  const Database = require('better-sqlite3');
+
+  const conversationsDir = path.join(os.homedir(), '.gemini', 'antigravity-cli', 'conversations');
+  const lastConvPath = path.join(os.homedir(), '.gemini', 'antigravity-cli', 'cache', 'last_conversations.json');
+
+  // Record existing DBs as fallback
+  let before;
+  try { before = new Set(fs.readdirSync(conversationsDir).filter(f => f.endsWith('.db'))); }
+  catch { before = new Set(); }
+
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [
-      antigravityScript,
+    const child = spawn('agy', [
       '-p', prompt,
-      '-y'           // auto-approve (non-interactive)
+      '--dangerously-skip-permissions',
+      '--print-timeout', '60s'
     ], {
       windowsHide: true,
       stdio: ['ignore', 'pipe', 'pipe']
     });
 
-    let stdout = '';
     let stderr = '';
-    child.stdout.on('data', (chunk) => { stdout += chunk.toString(); });
     child.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
 
     const timer = setTimeout(() => {
@@ -541,28 +548,150 @@ function callAntigravityCLI(prompt) {
 
     child.on('close', (code) => {
       clearTimeout(timer);
-      if (code !== 0) {
-        const detail = stderr.trim().slice(0, 200) || `exit code ${code}`;
+
+      // Discover the conversation DB. Primary: last_conversations.json.
+      // Fallback: find a new .db file that appeared during this session.
+      let convId = null;
+      try {
+        // Primary: last_conversations.json maps workspace paths to conversation IDs
+        const lastConv = JSON.parse(fs.readFileSync(lastConvPath, 'utf8'));
+        const cwd = process.cwd().replace(/\\/g, '/');
+        for (const [wsPath, id] of Object.entries(lastConv)) {
+          if (wsPath.replace(/\\/g, '/') === cwd) { convId = id; break; }
+        }
+      } catch {}
+
+      // Fallback: find a new DB file
+      if (!convId) {
+        try {
+          const after = fs.readdirSync(conversationsDir).filter(f => f.endsWith('.db'));
+          const newDbs = after.filter(f => !before.has(f));
+          if (newDbs.length === 1) {
+            convId = newDbs[0];
+          } else if (newDbs.length > 1) {
+            let bestSteps = -1;
+            for (const dbFile of newDbs) {
+              try {
+                const db = new Database(path.join(conversationsDir, dbFile), { readonly: true });
+                const row = db.prepare('SELECT count(*) as c FROM steps').get();
+                db.close();
+                if (row.c > bestSteps) { bestSteps = row.c; convId = dbFile; }
+              } catch {}
+            }
+          }
+        } catch {}
+      }
+
+      if (!convId) {
+        const detail = stderr.trim().slice(0, 200) || (code !== 0 ? `exit code ${code}` : 'no conversation DB found');
         reject(new Error(`Antigravity CLI error: ${detail}`));
         return;
       }
-      const text = stdout.trim();
-      if (!text) {
-        reject(new Error('Antigravity CLI returned empty response'));
-        return;
+
+      // Extract model response from the conversation DB
+      let db;
+      try {
+        db = new Database(path.join(conversationsDir, convId), { readonly: true });
+        const rows = db.prepare(
+          'SELECT step_payload FROM steps WHERE step_type IN (15, 23) ORDER BY idx DESC'
+        ).all();
+
+        if (rows.length === 0) {
+          reject(new Error('Antigravity CLI: no model response steps in conversation'));
+          return;
+        }
+
+        let responseText = '';
+        for (const row of rows) {
+          responseText = extractProtoField1(row.step_payload);
+          if (responseText) break;
+        }
+
+        if (!responseText) {
+          reject(new Error('Antigravity CLI: could not extract response from conversation DB'));
+          return;
+        }
+        resolve(responseText);
+      } catch (e) {
+        reject(new Error(`Antigravity CLI DB error: ${e.message}`));
+      } finally {
+        if (db) { try { db.close(); } catch {} }
       }
-      resolve(text);
     });
 
     child.on('error', (err) => {
       clearTimeout(timer);
       if (err.code === 'ENOENT') {
-        reject(new Error(`Antigravity CLI not found: node or gemini.js not accessible`));
+        reject(new Error('Antigravity CLI not found: agy is not on PATH'));
       } else {
         reject(new Error(`Antigravity CLI spawn error: ${err.message}`));
       }
     });
   });
+}
+
+// ---- Protobuf helpers for extracting text from agy conversation DBs ----
+
+function readVarint(buf, offset) {
+  let result = 0;
+  let shift = 0;
+  while (offset < buf.length) {
+    const byte = buf[offset++];
+    result |= (byte & 0x7f) << shift;
+    if (!(byte & 0x80)) return { value: result >>> 0, offset };
+    shift += 7;
+  }
+  return { value: 0, offset };
+}
+
+// Extract all field-1 string values from a protobuf message (recursive).
+// Field 1 in agy step_payload contains the model's reasoning/response text.
+function extractProtoField1(buf) {
+  const texts = [];
+  _walkProto(buf, 0, texts);
+  // Return the longest text found (model responses are usually the longest field-1 value)
+  let best = '';
+  for (const t of texts) { if (t.length > best.length) best = t; }
+  return best;
+}
+
+function _walkProto(buf, offset, texts) {
+  while (offset < buf.length) {
+    const { value: tag, offset: off2 } = readVarint(buf, offset);
+    offset = off2;
+    if (tag === 0) break; // invalid
+    const fieldNum = tag >>> 3;
+    const wireType = tag & 0x07;
+
+    if (wireType === 0) {
+      // varint — skip
+      const { offset: off3 } = readVarint(buf, offset);
+      offset = off3;
+    } else if (wireType === 2) {
+      // length-delimited
+      const { value: length, offset: off3 } = readVarint(buf, offset);
+      offset = off3;
+      if (offset + length > buf.length) break;
+      const data = buf.slice(offset, offset + length);
+      offset += length;
+      if (fieldNum === 1) {
+        try {
+          const text = data.toString('utf8');
+          if (text.length > 0) texts.push(text);
+        } catch {}
+      }
+      // Recurse into nested messages (common for fields 8, 42, etc.)
+      if (length > 2 && data[0] !== 0x7b) { // skip JSON-looking blobs
+        _walkProto(data, 0, texts);
+      }
+    } else if (wireType === 5) {
+      offset += 4; // 32-bit fixed
+    } else if (wireType === 1) {
+      offset += 8; // 64-bit fixed
+    } else {
+      break;
+    }
+  }
 }
 
 // ---- Scheduler time-keeping ----
@@ -689,7 +818,7 @@ function startScheduler() {
   // Log resolved CLI paths so we can verify they're found
   console.log(`  claude CLI: ${resolveCliPath('claude')}`);
   console.log(`  codex CLI:  ${resolveCliPath('codex')}`);
-  console.log(`  antigravity CLI: ${resolveCliPath('gemini')}`);
+  console.log(`  antigravity CLI: agy (v1.0.5)`);
   console.log(`Scheduler: started (offsets: ${schedulerState.minuteOffsets.join(', ')})`);
   schedulerTimer = setInterval(() => {
     fireAllTargets().catch(err => console.error('Scheduler tick error:', err));
