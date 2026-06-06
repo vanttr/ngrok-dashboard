@@ -246,7 +246,24 @@ Unlike Claude and Codex, `agy` writes responses to the TUI, not stdout. The sche
 4. After agy exits, the server reads the DB and extracts the response text
 5. Text is decoded from protobuf-encoded `step_payload` blobs in the `steps` table
 
-**Known limitation:** The proto parser extracts the first natural-language-looking text from the conversation DB. For simple prompts (e.g. "respond with 'hi' only"), agy may only store metadata (task names like "Simple Greeting Response", session IDs) without generating an explicit text response step. The parser falls back to this metadata, so the `responsePreview` may show the task name rather than the model's actual output. For substantive prompts, agy stores full model responses in field 1 of step type 15 — these extract correctly.
+**Response extraction — how it works and its limits:**
+
+agy stores responses across two step types in the SQLite `steps` table:
+
+| Step type | Contains | Example (trivial prompt) | Example (substantive prompt) |
+|-----------|----------|--------------------------|------------------------------|
+| **15** | Model's primary response | `"hi"` (2 chars) | `"A reverse proxy is an intermediary server..."` (300+ chars) |
+| **23** | Re-summarized variant + metadata | `"Simple Greeting Response"` (task name) | `"A reverse proxy acts as an intermediary..."` (rephrased) |
+
+The scheduler's proto parser (`extractProtoField1` in `server.js`) walks all `step_payload` blobs, collects every UTF-8 string and ASCII run, then selects a candidate using these priority filters:
+
+1. Prefer text containing spaces (catches multi-word prose — works for substantive prompts)
+2. Otherwise prefer short all-lowercase non-camelCase text (filters out `"sessionID"` identifiers)
+3. Fallback: any non-garbage text
+
+**For substantive prompts** (e.g. "explain what a reverse proxy is"): step 15 contains full prose with spaces → selected in pass 1 → ✅ correct.
+
+**For trivial prompts** (e.g. "respond with 'hi' only"): step 15 contains only `"hi"` (no spaces), step 23 contains `"Simple Greeting Response"` (also no spaces, also lowercase). Since `"hi"` has no spaces, pass 1 is skipped. Pass 2 picks the first non-camelCase text — which may be `"hi"` or `"Simple Greeting Response"` depending on buffer order. The result is non-deterministic between these two. This is acceptable for a health-check scheduler (either confirms the pipeline works), but future agents should be aware that `responsePreview` is best-effort extraction, not guaranteed to be the model's exact output.
 
 ### Credential config
 
