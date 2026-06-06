@@ -604,7 +604,7 @@ function callAntigravityCLI(prompt) {
       try {
         db = new Database(dbPath, { readonly: true });
         const rows = db.prepare(
-          'SELECT step_payload FROM steps WHERE step_type IN (15, 23) ORDER BY idx DESC'
+          'SELECT step_payload FROM steps WHERE step_type IN (15, 23) ORDER BY CASE WHEN step_type = 15 THEN 0 ELSE 1 END, idx DESC'
         ).all();
 
         if (rows.length === 0) {
