@@ -265,6 +265,29 @@ The scheduler's proto parser (`extractProtoField1` in `server.js`) walks all `st
 
 **For trivial prompts** (e.g. "respond with 'hi' only"): step 15 contains only `"hi"` (no spaces), step 23 contains `"Simple Greeting Response"` (also no spaces, also lowercase). Since `"hi"` has no spaces, pass 1 is skipped. Pass 2 picks the first non-camelCase text — which may be `"hi"` or `"Simple Greeting Response"` depending on buffer order. The result is non-deterministic between these two. This is acceptable for a health-check scheduler (either confirms the pipeline works), but future agents should be aware that `responsePreview` is best-effort extraction, not guaranteed to be the model's exact output.
 
+### Known limitation: model name validation
+
+agy's `--model` flag is **permissive** — it does not validate model names. Probing with various strings produced identical results: exit code `0`, a new conversation DB, and no stderr. agy silently falls back to its default model when given an unrecognized name.
+
+| Model string tested | Result |
+|---|---|
+| `gemini-2.5-flash` | Accepted (exit 0, DB created) |
+| `gemini-2.0-flash` | Accepted (exit 0, DB created) |
+| `gemini-2.5-pro` | Accepted (exit 0, DB created) |
+| `Gemini 3.5 Flash` | Accepted (exit 0, DB created) |
+| `Gemini 3.5 Flash (Low)` | Accepted (exit 0, DB created) |
+| `Gemini 3.5 Flash (Medium)` | Accepted (exit 0, DB created) |
+| `Gemini 3.5 Flash (High)` | Accepted (exit 0, DB created) |
+| `gemini-2.5-flash (Medium)` | Accepted (exit 0, DB created) |
+| `gemini-2.5-pro (Medium)` | Accepted (exit 0, DB created) |
+| `invalid-nonexistent-model-9999` | Accepted (exit 0, DB created — falls back to default) |
+
+**Tier suffixes** (`(Low)`, `(Medium)`, `(High)`) are valid and parsed correctly by agy. They do not cause errors.
+
+**Note:** `callAntigravityCLI()` in `server.js` does not currently pass `--model` to agy. The `model` field in `servers.json` is display-only. agy uses its own default model (configured in `~/.gemini/antigravity-cli/settings.json`).
+
+**Implication for `servers.json`:** The `model` field in an Antigravity target config is **display-only**. The current `callAntigravityCLI()` function does not pass `--model` to the agy subprocess — it uses agy's built-in default. If `--model` were added to the spawn args, the scheduler would still get the default model unless the exact API-style model code was provided (e.g. `gemini-2.5-flash` rather than `"Gemini 3.5 Flash"`). There is no way to confirm which model agy actually used from the conversation DB alone.
+
 ### Credential config
 
 | Field | Value |
