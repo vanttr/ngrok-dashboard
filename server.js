@@ -692,9 +692,9 @@ function extractProtoField1(buf) {
   for (const t of candidates) {
     if (t.length >= 1 && t.length <= 200 && !camelRe.test(t) && /^[a-z]/.test(t)) return t;
   }
-  // Fallback: any short text
+  // Fallback: any short text that contains at least one letter (skip pure noise like "@:")
   for (const t of candidates) {
-    if (t.length >= 1 && t.length <= 200) return t;
+    if (t.length >= 1 && t.length <= 200 && /[a-zA-Z]/.test(t)) return t;
   }
   // Last resort: any text
   for (const t of candidates) {
