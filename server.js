@@ -553,7 +553,8 @@ function callAntigravityCLI(prompt) {
       // Fallback: find a new .db file that appeared during this session.
       let convId = null;
       try {
-        // Primary: last_conversations.json maps workspace paths to conversation IDs
+        // Primary: last_conversations.json maps workspace paths to conversation IDs.
+        // IDs are bare UUIDs (no .db extension) — the actual files are UUID.db.
         const lastConv = JSON.parse(fs.readFileSync(lastConvPath, 'utf8'));
         const cwd = process.cwd().replace(/\\/g, '/');
         for (const [wsPath, id] of Object.entries(lastConv)) {
@@ -561,7 +562,7 @@ function callAntigravityCLI(prompt) {
         }
       } catch {}
 
-      // Fallback: find a new DB file
+      // Fallback: find a new DB file (filenames already include .db)
       if (!convId) {
         try {
           const after = fs.readdirSync(conversationsDir).filter(f => f.endsWith('.db'));
@@ -582,6 +583,10 @@ function callAntigravityCLI(prompt) {
         } catch {}
       }
 
+      // Ensure convId has .db extension. last_conversations.json stores bare UUIDs;
+      // directory listings already include the extension.
+      if (convId && !convId.endsWith('.db')) convId += '.db';
+
       if (!convId) {
         const detail = stderr.trim().slice(0, 200) || (code !== 0 ? `exit code ${code}` : 'no conversation DB found');
         reject(new Error(`Antigravity CLI error: ${detail}`));
@@ -589,9 +594,15 @@ function callAntigravityCLI(prompt) {
       }
 
       // Extract model response from the conversation DB
+      const dbPath = path.join(conversationsDir, convId);
+      if (!fs.existsSync(dbPath)) {
+        reject(new Error(`Antigravity CLI: conversation DB not found at ${dbPath}`));
+        return;
+      }
+
       let db;
       try {
-        db = new Database(path.join(conversationsDir, convId), { readonly: true });
+        db = new Database(dbPath, { readonly: true });
         const rows = db.prepare(
           'SELECT step_payload FROM steps WHERE step_type IN (15, 23) ORDER BY idx DESC'
         ).all();
@@ -644,22 +655,76 @@ function readVarint(buf, offset) {
   return { value: 0, offset };
 }
 
-// Extract all field-1 string values from a protobuf message (recursive).
-// Field 1 in agy step_payload contains the model's reasoning/response text.
+// Extract the model's response text from a protobuf step_payload.
+// Walks the wire format recursively, collects all UTF-8 strings, then filters.
 function extractProtoField1(buf) {
   const texts = [];
-  _walkProto(buf, 0, texts);
-  // Return the longest text found (model responses are usually the longest field-1 value)
-  let best = '';
-  for (const t of texts) { if (t.length > best.length) best = t; }
-  return best;
+  _walkProtoAllFields(buf, 0, texts);
+
+  // Also do a raw ASCII scan as fallback — catches text in non-standard field encoding
+  const rawRuns = extractAsciiRuns(buf);
+  for (const t of rawRuns) { if (t.length >= 2) texts.push(t); }
+
+  // Filter: skip UUIDs, hex blobs, JSON, file contents, and garbage
+  const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  const hexRe = /^[0-9a-f]{20,}$/i;
+  const garbageRe = /[^\x20-\x7e\n\r\t]/;
+
+  // Collect candidates
+  const candidates = [];
+  for (const t of texts) {
+    if (t.length < 1 || t.length > 5000) continue;
+    if (uuidRe.test(t)) continue;
+    if (hexRe.test(t)) continue;
+    if (t[0] === '{' || t[0] === '[' || t[0] === '<') continue;
+    if (garbageRe.test(t)) continue;
+    if (/^(syntax|=|\/\/|#|--|import |package |func |class |def )/.test(t)) continue;
+    candidates.push(t);
+  }
+
+  // Prefer: looks like natural language (contains spaces, or all-lowercase short text)
+  for (const t of candidates) {
+    if (t.includes(' ') && t.length <= 2000) return t;
+  }
+  // Then: short all-lowercase text (like "hi"), excluding camelCase identifiers
+  const camelRe = /[a-z][A-Z]/;
+  for (const t of candidates) {
+    if (t.length >= 1 && t.length <= 200 && !camelRe.test(t) && /^[a-z]/.test(t)) return t;
+  }
+  // Fallback: any short text
+  for (const t of candidates) {
+    if (t.length >= 1 && t.length <= 200) return t;
+  }
+  // Last resort: any text
+  for (const t of candidates) {
+    return t;
+  }
+  return '';
 }
 
-function _walkProto(buf, offset, texts) {
+// Raw ASCII extraction: find all runs of printable characters in a buffer.
+// Catches text in deeply nested or non-standard protobuf field encodings.
+function extractAsciiRuns(buf) {
+  const runs = [];
+  let run = '';
+  for (let i = 0; i < buf.length; i++) {
+    const b = buf[i];
+    if (b >= 0x20 && b <= 0x7e) {
+      run += String.fromCharCode(b);
+    } else {
+      if (run.length >= 2) runs.push(run);
+      run = '';
+    }
+  }
+  if (run.length >= 2) runs.push(run);
+  return runs;
+}
+
+function _walkProtoAllFields(buf, offset, texts) {
   while (offset < buf.length) {
     const { value: tag, offset: off2 } = readVarint(buf, offset);
     offset = off2;
-    if (tag === 0) break; // invalid
+    if (tag === 0) continue; // field 0 used by agy internally
     const fieldNum = tag >>> 3;
     const wireType = tag & 0x07;
 
@@ -668,21 +733,22 @@ function _walkProto(buf, offset, texts) {
       const { offset: off3 } = readVarint(buf, offset);
       offset = off3;
     } else if (wireType === 2) {
-      // length-delimited
+      // length-delimited — could be string, bytes, or nested message
       const { value: length, offset: off3 } = readVarint(buf, offset);
       offset = off3;
       if (offset + length > buf.length) break;
       const data = buf.slice(offset, offset + length);
       offset += length;
-      if (fieldNum === 1) {
+      // Try decoding as UTF-8 text for any field number
+      if (length >= 1 && length <= 10000) {
         try {
           const text = data.toString('utf8');
-          if (text.length > 0) texts.push(text);
+          if (text.length > 0 && text.length < length * 3) texts.push(text);
         } catch {}
       }
-      // Recurse into nested messages (common for fields 8, 42, etc.)
-      if (length > 2 && data[0] !== 0x7b) { // skip JSON-looking blobs
-        _walkProto(data, 0, texts);
+      // Recurse into nested messages that aren't plain text
+      if (length > 2 && data[0] !== 0x7b && data[0] !== 0x5b) {
+        _walkProtoAllFields(data, 0, texts);
       }
     } else if (wireType === 5) {
       offset += 4; // 32-bit fixed
