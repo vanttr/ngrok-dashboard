@@ -282,9 +282,9 @@ agy's `--model` flag is **permissive** — it does not validate model names. Pro
 | `gemini-2.5-pro (Medium)` | Accepted (exit 0, DB created) |
 | `invalid-nonexistent-model-9999` | Accepted (exit 0, DB created — falls back to default) |
 
-**Tier suffixes** (`(Low)`, `(Medium)`, `(High)`) are valid and parsed correctly by agy. They do not cause errors.
+**Tier suffixes** (`(Low)`, `(Medium)`, `(High)`) are **required** for agy to actually send requests to the API. Without a tier suffix (e.g. bare `"Gemini 3.5 Flash"`), agy silently ignores the model name — it creates a conversation DB with 0 steps and makes no API call at all (exit code 0, no error). With a tier suffix (e.g. `"Gemini 3.5 Flash (Medium)"`), agy validates the name and makes the API call.
 
-**Note:** `callAntigravityCLI()` in `server.js` does not currently pass `--model` to agy. The `model` field in `servers.json` is display-only. agy uses its own default model (configured in `~/.gemini/antigravity-cli/settings.json`).
+**Note:** `callAntigravityCLI()` in `server.js` does not currently pass `--model` to agy. The `model` field in `servers.json` is display-only. agy uses its own default model (configured in `~/.gemini/antigravity-cli/settings.json`). To control the model, `callAntigravityCLI` would need to pass `--model` from the target config.
 
 **Implication for `servers.json`:** The `model` field in an Antigravity target config is **display-only**. The current `callAntigravityCLI()` function does not pass `--model` to the agy subprocess — it uses agy's built-in default. If `--model` were added to the spawn args, the scheduler would still get the default model unless the exact API-style model code was provided (e.g. `gemini-2.5-flash` rather than `"Gemini 3.5 Flash"`). There is no way to confirm which model agy actually used from the conversation DB alone.
 

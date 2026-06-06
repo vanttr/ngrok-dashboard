@@ -38,7 +38,7 @@
       {
         "name": "Antigravity CLI",
         "type": "antigravity",
-        "model": "Gemini 3.5 Flash",
+        "model": "Gemini 3.5 Flash (Medium)",
         "credentialPath": "~/.gemini/oauth_creds.json",
         "credentialKey": "access_token"
       }
