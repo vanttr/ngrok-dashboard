@@ -380,6 +380,35 @@ Server's `resolveCliPath(name)` checks:
 
 ---
 
+## Quota behaviour: agy vs legacy Gemini CLI
+
+The same Google account has **two separate quota buckets** depending on which CLI is used:
+
+| | agy (Antigravity CLI) | gemini CLI (legacy npm) |
+|---|---|---|
+| Package | `agy` binary (Go, v1.0.5+) | `@google/gemini-cli` (Node.js, v0.45) |
+| Invocation | `agy -p "..." --dangerously-skip-permissions` | `node gemini.js -p "..." -y` |
+| Model flag | `--model` | `-m` |
+| Tier suffixes | **Required** (e.g. `Gemini 3.5 Flash (Medium)`) | **Not supported** (returns 404) |
+| Valid model names | `Gemini 3.5 Flash (Medium)`, `gemini-2.5-pro (Medium)`, etc. | `gemini-2.5-flash` (works), `gemini-2.5-pro` (rate-limited), `gemini-2.0-flash` (404/deprecated) |
+| Quota bucket | 144-hour reset (individual quota) | Per-minute with auto-retry (~10s backoff) |
+| Quota behaviour | Fails immediately on exhaustion | Auto-retries up to 3 times, often succeeds |
+
+### Model name compatibility table
+
+| Model name | agy | gemini CLI (legacy) |
+|---|---|---|
+| `gemini-2.5-flash` | Ignored (no tier) | ✅ Works — returned `"hi"` |
+| `gemini-2.5-pro` | Ignored (no tier) | ⚠️ Rate-limited (quota) |
+| `gemini-2.0-flash` | Ignored (no tier) | ❌ 404 (deprecated) |
+| `Gemini 3.5 Flash (Medium)` | ✅ Accepted | ❌ 404 |
+| `gemini-2.5-flash (Medium)` | ✅ Accepted | ❌ 404 |
+| `gemini-2.5-pro (Medium)` | ✅ Accepted | ❌ 404 |
+
+**Key takeaway:** Tier suffixes (`(Low)`/`(Medium)`/`(High)`) are agy-specific. The legacy Gemini CLI uses bare model names (`gemini-2.5-flash`) and a different quota system. They cannot share the same model config.
+
+---
+
 ## Diagnosis history
 
 - `docs/diagnose/2026-06-05-claude-codex-scheduler-auth-fix.md` — Full debug session for auth, text wrapping, scheduler stop, and spawn issues
