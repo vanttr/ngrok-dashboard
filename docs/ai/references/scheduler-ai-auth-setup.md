@@ -246,6 +246,8 @@ Unlike Claude and Codex, `agy` writes responses to the TUI, not stdout. The sche
 4. After agy exits, the server reads the DB and extracts the response text
 5. Text is decoded from protobuf-encoded `step_payload` blobs in the `steps` table
 
+**Known limitation:** The proto parser extracts the first natural-language-looking text from the conversation DB. For simple prompts (e.g. "respond with 'hi' only"), agy may only store metadata (task names like "Simple Greeting Response", session IDs) without generating an explicit text response step. The parser falls back to this metadata, so the `responsePreview` may show the task name rather than the model's actual output. For substantive prompts, agy stores full model responses in field 1 of step type 15 — these extract correctly.
+
 ### Credential config
 
 | Field | Value |
