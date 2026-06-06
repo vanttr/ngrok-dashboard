@@ -667,7 +667,6 @@ function extractProtoField1(buf) {
 
   // Filter: skip UUIDs, hex blobs, JSON, file contents, and garbage
   const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-  const containsUuidRe = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
   const hexRe = /^[0-9a-f]{20,}$/i;
   const garbageRe = /[^\x20-\x7e\n\r\t]/;
 
@@ -676,7 +675,7 @@ function extractProtoField1(buf) {
   for (const t of texts) {
     if (t.length < 1 || t.length > 5000) continue;
     if (uuidRe.test(t)) continue;
-    if (containsUuidRe.test(t)) continue; // corrupted UUID like "b$cf332efb-...ca4j"
+    if (t.includes('$')) continue; // protobuf artifact (e.g. "b$cf332efb-...")
     if (hexRe.test(t)) continue;
     if (t[0] === '{' || t[0] === '[' || t[0] === '<') continue;
     if (garbageRe.test(t)) continue;
