@@ -231,7 +231,7 @@ function callAI(target, prompt) {
     return callCodexCLI(prompt);
   } else if (target.type === 'antigravity') {
     // Antigravity uses Google OAuth tokens — CLI subprocess only.
-    return callAntigravityCLI(prompt);
+    return callAntigravityCLI(prompt, target.model);
   }
   throw new Error(`Unknown target type: ${target.type}`);
 }
@@ -516,7 +516,7 @@ function callCodexCLI(prompt) {
 // Antigravity CLI (agy): standalone Go binary at %LOCALAPPDATA%/agy/bin/agy.exe.
 // Uses OAuth via Windows keyring. Response goes to TUI, not stdout, so we
 // extract it from the SQLite conversation DB that agy writes on exit.
-function callAntigravityCLI(prompt) {
+function callAntigravityCLI(prompt, model) {
   const { spawn } = require('child_process');
   const Database = require('better-sqlite3');
 
@@ -529,11 +529,13 @@ function callAntigravityCLI(prompt) {
   catch { before = new Set(); }
 
   return new Promise((resolve, reject) => {
-    const child = spawn('agy', [
+    const args = [
       '-p', prompt,
       '--dangerously-skip-permissions',
       '--print-timeout', '60s'
-    ], {
+    ];
+    if (model) args.push('--model', model);
+    const child = spawn('agy', args, {
       windowsHide: true,
       stdio: ['ignore', 'pipe', 'pipe']
     });
