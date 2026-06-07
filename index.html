@@ -332,6 +332,73 @@
     font-size: var(--text-md);
   }
 
+  /* ---- Accordion details panel ---- */
+  .accordion-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    margin-top: 0.6rem;
+    font-size: var(--text-xs);
+    color: var(--ink-soft);
+    cursor: pointer;
+    user-select: none;
+    transition: color 150ms ease;
+    line-height: 1;
+  }
+  .accordion-toggle:hover { color: var(--ink); }
+
+  .accordion-arrow {
+    font-size: 0.7rem;
+    transition: transform 200ms ease;
+    display: inline-block;
+  }
+  .server-card.expanded .accordion-arrow {
+    transform: rotate(180deg);
+  }
+
+  .accordion-panel {
+    display: grid;
+    grid-template-rows: 0fr;
+    transition: grid-template-rows 0.25s ease;
+    overflow: hidden;
+  }
+  .server-card.expanded .accordion-panel {
+    grid-template-rows: 1fr;
+  }
+
+  .accordion-panel-inner {
+    min-height: 0;
+    margin-top: 0.75rem;
+    padding: 0.75rem 1rem;
+    background: rgba(32,48,58,0.03);
+    border-radius: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .accordion-row {
+    display: flex;
+    align-items: baseline;
+    gap: 0.5rem;
+    font-size: var(--text-xs);
+  }
+  .accordion-label {
+    color: var(--ink-soft);
+    font-weight: 500;
+    min-width: 55px;
+    flex-shrink: 0;
+  }
+  .accordion-value {
+    color: var(--ink);
+  }
+  .stack-mismatch {
+    color: var(--drift);
+    font-size: 0.75rem;
+    font-weight: 500;
+    margin-left: 0.4rem;
+  }
+
   /* ---- Scheduler card ---- */
   .scheduler-card {
     background: linear-gradient(135deg, rgba(255,255,255,0.9), rgba(255,255,255,0.66));
@@ -502,14 +569,20 @@ const API = '/api';
 // ---- Flicker-free update helpers ----
 // Track cards by port so we can update in place instead of rebuilding DOM
 let cardMap = {};  // { port: { el, state } }
-let startingPorts = {};  // { configuredPort: { timer, startTime } } — keyed by configuredPort to avoid drift mismatch
+let startingPorts = {};  // { configuredPort: { timer, startTime } }
+let expandedPorts = new Set();  // track which cards have accordion expanded across refreshes — keyed by configuredPort to avoid drift mismatch
 
 function statesEqual(a, b) {
   if (!a || !b) return false;
+  const sameStack = (!a.stack && !b.stack) ||
+    (a.stack && b.stack && a.stack.display === b.stack.display && a.stack.mismatch === b.stack.mismatch);
+  const sameUptime = (!a.uptime && !b.uptime) ||
+    (a.uptime && b.uptime && a.uptime.seconds === b.uptime.seconds);
   return a.name === b.name && a.health === b.health && a.status === b.status &&
          a.configuredPort === b.configuredPort && a.actualPort === b.actualPort &&
          a.isActive === b.isActive && a.ngrokUrl === b.ngrokUrl &&
-         a.hasDevScript === b.hasDevScript && a.isStarting === b.isStarting;
+         a.hasDevScript === b.hasDevScript && a.isStarting === b.isStarting &&
+         sameStack && sameUptime;
 }
 
 function serverButtonClass(state) {
@@ -608,7 +681,9 @@ function renderServers(servers, target) {
       configuredPort: s.configuredPort, actualPort: s.actualPort,
       isActive, isDown, isDrifted, ngrokUrl, displayPort,
       hasDevScript: !!s.hasDevScript,
-      isStarting: !!startingPorts[s.configuredPort]  // Use configuredPort as key — avoids drift mismatch
+      isStarting: !!startingPorts[s.configuredPort],
+      stack: s.stack || null,
+      uptime: s.uptime || null,
     };
 
     // If server came online while we were starting it, clear the starting state
@@ -662,7 +737,23 @@ function renderServers(servers, target) {
 
     // Build the card HTML
     const card = document.createElement('div');
-    card.className = 'server-card' + (state.isActive ? ' active' : '') + (state.isDown ? ' dimmed' : '');
+    const expandedClass = expandedPorts.has(state.displayPort) ? ' expanded' : '';
+    card.className = 'server-card' + (state.isActive ? ' active' : '') + (state.isDown ? ' dimmed' : '') + expandedClass;
+
+    // Build stack details HTML
+    let stackHtml = '';
+    if (state.stack && state.stack.display) {
+      stackHtml = `<span class="accordion-value">${esc(state.stack.display)}</span>`;
+      if (state.stack.mismatch) {
+        stackHtml += `<span class="stack-mismatch">config mismatch</span>`;
+      }
+    } else {
+      stackHtml = `<span class="accordion-value">—</span>`;
+    }
+
+    // Build uptime line
+    const uptimeText = state.uptime ? formatUptime(state.uptime.seconds) : '—';
+    const startedText = (state.uptime && state.uptime.startedAt) ? formatStarted(state.uptime.startedAt) : null;
 
     card.innerHTML = `
       <div class="card-top">
@@ -687,6 +778,24 @@ function renderServers(servers, target) {
         ` : ''}
         ${state.isActive && state.ngrokUrl ? `<a class="tunnel-url" href="${escAttr(state.ngrokUrl)}" target="_blank">Open server &rarr;</a>` : ''}
       </div>
+
+      <!-- Accordion toggle and panel -->
+      <span class="accordion-toggle" data-action="toggle-accordion" data-port="${state.displayPort}">
+        <span class="accordion-arrow">&#9660;</span> details
+      </span>
+      <div class="accordion-panel">
+        <div class="accordion-panel-inner">
+          <div class="accordion-row">
+            <span class="accordion-label">Stack:</span>
+            ${stackHtml}
+          </div>
+          <div class="accordion-row">
+            <span class="accordion-label">Uptime:</span>
+            <span class="accordion-value">${uptimeText}</span>
+          </div>
+          ${startedText ? `<div class="accordion-row"><span class="accordion-label">Started:</span><span class="accordion-value">${esc(startedText)}</span></div>` : ''}
+        </div>
+      </div>
     `;
 
     const startBtn = card.querySelector('button[data-action="start-server"]');
@@ -700,6 +809,21 @@ function renderServers(servers, target) {
     if (tunnelBtn) {
       tunnelBtn.addEventListener('click', () => {
         handleTunnel(tunnelBtn.dataset.port, state.isActive);
+      });
+    }
+
+    // Accordion toggle handler
+    const accordionToggle = card.querySelector('[data-action="toggle-accordion"]');
+    if (accordionToggle) {
+      accordionToggle.addEventListener('click', () => {
+        const port = Number(accordionToggle.dataset.port);
+        if (expandedPorts.has(port)) {
+          expandedPorts.delete(port);
+          card.classList.remove('expanded');
+        } else {
+          expandedPorts.add(port);
+          card.classList.add('expanded');
+        }
       });
     }
 
@@ -779,6 +903,26 @@ function esc(s) {
   return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'})[c]);
 }
 function escAttr(s) { return String(s).replace(/"/g, '&quot;'); }
+
+function formatUptime(seconds) {
+  if (seconds == null) return '—';
+  if (seconds < 60) return '<1m';
+  if (seconds < 3600) return Math.floor(seconds / 60) + 'm';
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  if (h < 24) return m > 0 ? `${h}h ${m}m` : `${h}h`;
+  const d = Math.floor(h / 24);
+  return `${d}d ${h % 24}h`;
+}
+
+function formatStarted(isoStr) {
+  if (!isoStr) return '—';
+  const d = new Date(isoStr);
+  const now = new Date();
+  const sameDay = d.toDateString() === now.toDateString();
+  if (sameDay) return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  return d.toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+}
 
 function timeAgo(isoStr) {
   if (!isoStr) return 'never';
