@@ -1,5 +1,5 @@
 // server.js — Ngrok Tunnel Switcher
-const { spawn } = require('child_process');
+const { spawn, execFile } = require('child_process');
 const http = require('http');
 const https = require('https');
 const fs = require('fs');
@@ -904,6 +904,7 @@ function stopScheduler() {
 // ---- Server Discovery & Health Check ----
 const SCAN_RANGE = CONFIG.scanRange || 50;
 let serverStatuses = {};  // { port: { name, configuredPort, actualPort, health, status } }
+let firstSeenHealthy = {};  // { configuredPort: timestamp_ms } — set on down→ok transition
 
 async function checkPort(port, timeoutMs = 2000) {
   const controller = new AbortController();
@@ -921,28 +922,175 @@ async function checkPort(port, timeoutMs = 2000) {
   }
 }
 
+// ---- Process Detection ----
+const RUNTIME_KEYWORDS = {
+  Bun: 'bun.exe',
+  Node: 'node.exe', 'Node.js': 'node.exe', Express: 'node.exe', Vite: 'node.exe',
+  Next: 'node.exe', Nuxt: 'node.exe', Hono: 'node.exe', Fastify: 'node.exe',
+  React: 'node.exe', tsx: 'node.exe',
+  Python: 'python.exe', uvicorn: 'python.exe', FastAPI: 'python.exe',
+  Flask: 'python.exe', Django: 'python.exe',
+  PowerShell: 'pwsh.exe', pwsh: 'pwsh.exe',
+};
+
+const EXE_TO_RUNTIME = {
+  'bun.exe': 'Bun',
+  'node.exe': 'Node.js',
+  'python.exe': 'Python',
+  'pwsh.exe': 'PowerShell',
+};
+
+function execFileAsync(cmd, args = []) {
+  return new Promise((resolve, reject) => {
+    execFile(cmd, args, { timeout: 3000, windowsHide: true }, (err, stdout) => {
+      if (err) return reject(err);
+      resolve(stdout);
+    });
+  });
+}
+
+async function detectProcess(port) {
+  try {
+    const netstatOut = await execFileAsync('netstat', ['-ano']);
+    let pid = null;
+    for (const line of netstatOut.split('\n')) {
+      const re = new RegExp(`:${port}\\s+.*LISTENING\\s+(\\d+)`);
+      const m = line.match(re);
+      if (m) { pid = m[1]; break; }
+    }
+    if (!pid) return null;
+
+    const tasklistOut = await execFileAsync('tasklist', ['/fi', `PID eq ${pid}`, '/fo', 'csv', '/nh']);
+    const csvMatch = tasklistOut.match(/^"([^"]+)"/m);
+    if (!csvMatch) return null;
+    const exe = csvMatch[1].toLowerCase();
+
+    const runtime = EXE_TO_RUNTIME[exe] || exe.replace('.exe', '');
+    return { exe, runtime, pid };
+  } catch {
+    return null;
+  }
+}
+
+function getStackDisplay(server, processInfo) {
+  const configStack = server.stack;
+  if (!configStack) {
+    return {
+      display: processInfo ? processInfo.runtime : 'Unknown',
+      source: 'process',
+      configValue: null,
+      processValue: processInfo ? processInfo.runtime : null,
+      mismatch: false,
+    };
+  }
+  if (!processInfo) {
+    return {
+      display: configStack,
+      source: 'config',
+      configValue: configStack,
+      processValue: null,
+      mismatch: false,
+    };
+  }
+  let matched = false;
+  for (const [keyword, expectedExe] of Object.entries(RUNTIME_KEYWORDS)) {
+    if (configStack.toLowerCase().includes(keyword.toLowerCase()) && expectedExe === processInfo.exe) {
+      matched = true;
+      break;
+    }
+  }
+  return {
+    display: matched ? configStack : processInfo.runtime,
+    source: matched ? 'config' : 'process',
+    configValue: configStack,
+    processValue: processInfo.runtime,
+    mismatch: !matched,
+  };
+}
+
+// ---- Uptime Tracking ----
+async function getProcessStartTime(pid) {
+  try {
+    const out = await execFileAsync('powershell', [
+      '-NoProfile', '-Command',
+      `(Get-Process -Id ${pid}).StartTime.ToString('o')`
+    ]);
+    return out.trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+async function getUptime(port, processInfo) {
+  if (processInfo && processInfo.pid) {
+    const startTime = await getProcessStartTime(processInfo.pid);
+    if (startTime) {
+      const startedAt = new Date(startTime).getTime();
+      const seconds = Math.floor((Date.now() - startedAt) / 1000);
+      return { startedAt: new Date(startedAt).toISOString(), seconds, source: 'process' };
+    }
+  }
+  if (firstSeenHealthy[port]) {
+    const seconds = Math.floor((Date.now() - firstSeenHealthy[port]) / 1000);
+    return { startedAt: new Date(firstSeenHealthy[port]).toISOString(), seconds, source: 'proxy' };
+  }
+  return null;
+}
+
 async function discoverServer(server) {
   const configuredPort = server.port;
   const ok = await checkPort(configuredPort);
+
+  let base;
   if (ok) {
-    return { name: server.name, configuredPort, actualPort: configuredPort, health: 'ok', status: 'ok', hasDevScript: !!server.devScript };
-  }
+    base = { name: server.name, configuredPort, actualPort: configuredPort,
+             health: 'ok', status: 'ok', hasDevScript: !!server.devScript };
+  } else {
+    // Build set of all configured ports to skip during drift scan
+    const configuredPorts = new Set(CONFIG.servers.map(s => s.port));
 
-  // Build set of all configured ports to skip during drift scan
-  const configuredPorts = new Set(CONFIG.servers.map(s => s.port));
-
-  // Fallback: scan ±SCAN_RANGE around configured port
-  const start = Math.max(1, configuredPort - SCAN_RANGE);
-  const end = configuredPort + SCAN_RANGE;
-  for (let p = start; p <= end; p++) {
-    if (p === configuredPort) continue; // already checked
-    if (configuredPorts.has(p)) continue; // skip other servers' configured ports
-    if (await checkPort(p, 500)) {
-      return { name: server.name, configuredPort, actualPort: p, health: 'ok', status: 'drifted', hasDevScript: !!server.devScript };
+    // Fallback: scan ±SCAN_RANGE around configured port
+    const start = Math.max(1, configuredPort - SCAN_RANGE);
+    const end = configuredPort + SCAN_RANGE;
+    let drifted = null;
+    for (let p = start; p <= end; p++) {
+      if (p === configuredPort) continue; // already checked
+      if (configuredPorts.has(p)) continue; // skip other servers' configured ports
+      if (await checkPort(p, 500)) {
+        drifted = p;
+        break;
+      }
+    }
+    if (drifted) {
+      base = { name: server.name, configuredPort, actualPort: drifted,
+               health: 'ok', status: 'drifted', hasDevScript: !!server.devScript };
+    } else {
+      base = { name: server.name, configuredPort, actualPort: null,
+               health: 'down', status: 'down', hasDevScript: !!server.devScript };
     }
   }
 
-  return { name: server.name, configuredPort, actualPort: null, health: 'down', status: 'down', hasDevScript: !!server.devScript };
+  // ---- Process detection, stack matching, uptime tracking ----
+  const actualPort = base.actualPort;
+  let processInfo = null;
+
+  if (base.health === 'ok' && actualPort) {
+    // Track first-seen-healthy for uptime fallback
+    if (!firstSeenHealthy[configuredPort]) {
+      firstSeenHealthy[configuredPort] = Date.now();
+    }
+
+    // Detect process
+    processInfo = await detectProcess(actualPort);
+  } else {
+    // Server went down — clear first-seen-healthy
+    delete firstSeenHealthy[configuredPort];
+  }
+
+  const stack = getStackDisplay(server, processInfo);
+  const uptime = base.health === 'ok' ? await getUptime(configuredPort, processInfo) : null;
+
+  return { ...base, stack, uptime };
 }
 
 let scanning = false;
