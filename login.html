@@ -1,0 +1,402 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ngrok Dashboard - Sign In</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg-0: #edf2f5;
+    --bg-1: #e3eaef;
+    --bg-2: #dfe7eb;
+    --ink-strong: #20303a;
+    --ink: #344854;
+    --ink-soft: #647682;
+    --accent: #466a5a;
+    --accent-strong: #355247;
+    --down: #a84747;
+    --down-bg: rgba(168,71,71,0.10);
+    --radius-card: 24px;
+    --radius-btn: 999px;
+    --radius-pill: 14px;
+    --text-xs: 0.84rem;
+    --text-sm: 0.95rem;
+    --text-md: 1rem;
+    --text-lg: 1.2rem;
+    --text-xl: 1.5rem;
+  }
+
+  body {
+    font-family: 'Roboto', 'Segoe UI', sans-serif;
+    background:
+      radial-gradient(ellipse 60% 60% at 30% 10%, rgba(70,106,90,0.08) 0%, transparent 70%),
+      radial-gradient(ellipse 50% 50% at 80% 80%, rgba(100,150,180,0.07) 0%, transparent 70%),
+      linear-gradient(180deg, var(--bg-0) 0%, var(--bg-1) 50%, var(--bg-2) 100%);
+    min-height: 100vh;
+    color: var(--ink);
+    font-size: var(--text-sm);
+    line-height: 1.5;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+  }
+
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background: radial-gradient(ellipse 40% 40% at 50% 30%, rgba(255,255,255,0.45), transparent);
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .page-shell {
+    position: relative;
+    z-index: 1;
+    width: 100%;
+    max-width: 26rem;
+    padding: 2rem 1.5rem;
+    animation: fadeSlideUp 400ms ease;
+  }
+
+  @keyframes fadeSlideUp {
+    from { opacity: 0; transform: translateY(16px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  .login-card {
+    background: linear-gradient(135deg, rgba(255,255,255,0.92), rgba(255,255,255,0.72));
+    backdrop-filter: blur(20px) saturate(1.08);
+    border-radius: var(--radius-card);
+    padding: 2rem;
+    box-shadow: 0 16px 48px rgba(27,41,50,0.08);
+    position: relative;
+    overflow: hidden;
+  }
+
+  .login-card::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    padding: 1px;
+    background: linear-gradient(135deg, rgba(70,106,90,0.18), rgba(32,48,58,0.06));
+    -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+    -webkit-mask-composite: xor;
+    mask-composite: exclude;
+    pointer-events: none;
+  }
+
+  .logo {
+    text-align: center;
+    margin-bottom: 1.75rem;
+  }
+
+  .logo h1 {
+    font-size: var(--text-xl);
+    font-weight: 700;
+    color: var(--ink-strong);
+    letter-spacing: -0.02em;
+    line-height: 1.2;
+  }
+
+  .logo p {
+    font-size: var(--text-xs);
+    color: var(--ink-soft);
+    margin-top: 0.25rem;
+  }
+
+  .auth-options {
+    display: flex;
+    gap: 0.75rem;
+    margin-bottom: 1.25rem;
+  }
+
+  .auth-tab {
+    flex: 1;
+    padding: 0.75rem 1rem;
+    border-radius: var(--radius-card);
+    border: 1px solid rgba(32,48,58,0.1);
+    background: rgba(255,255,255,0.6);
+    cursor: pointer;
+    text-align: center;
+    font-size: var(--text-sm);
+    font-weight: 500;
+    color: var(--ink-soft);
+    transition: all 180ms ease;
+    font-family: inherit;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.35rem;
+  }
+
+  .auth-tab:hover {
+    border-color: rgba(70,106,90,0.2);
+    background: rgba(255,255,255,0.85);
+    color: var(--ink);
+  }
+
+  .auth-tab.active {
+    border-color: var(--accent);
+    background: rgba(70,106,90,0.08);
+    color: var(--accent-strong);
+    box-shadow: 0 0 0 2px rgba(70,106,90,0.12);
+  }
+
+  .auth-tab .tab-icon {
+    font-size: 1.3rem;
+    line-height: 1;
+  }
+
+  .google-tab {
+    /* Google blue accent */
+  }
+  .google-tab.active {
+    border-color: #4285f4;
+    background: rgba(66,133,244,0.06);
+    box-shadow: 0 0 0 2px rgba(66,133,244,0.12);
+    color: #3367d6;
+  }
+
+  .password-form {
+    display: none;
+    animation: fadeSlideUp 200ms ease;
+  }
+
+  .password-form.visible {
+    display: block;
+  }
+
+  .form-group {
+    margin-bottom: 1rem;
+  }
+
+  .form-group label {
+    display: block;
+    font-size: var(--text-xs);
+    font-weight: 600;
+    color: var(--ink-soft);
+    margin-bottom: 0.35rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  .form-group input {
+    width: 100%;
+    padding: 0.65rem 0.85rem;
+    border: 1px solid rgba(32,48,58,0.15);
+    border-radius: 12px;
+    font-size: var(--text-sm);
+    font-family: inherit;
+    color: var(--ink-strong);
+    background: rgba(255,255,255,0.7);
+    transition: border-color 180ms ease, box-shadow 180ms ease;
+    outline: none;
+  }
+
+  .form-group input:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(70,106,90,0.1);
+  }
+
+  .btn {
+    width: 100%;
+    padding: 0.7rem 1.25rem;
+    border: none;
+    border-radius: var(--radius-btn);
+    font-size: var(--text-sm);
+    font-weight: 600;
+    font-family: inherit;
+    cursor: pointer;
+    transition: all 180ms ease;
+    letter-spacing: 0.01em;
+  }
+
+  .btn-primary {
+    background: var(--accent);
+    color: #fff;
+  }
+
+  .btn-primary:hover {
+    background: var(--accent-strong);
+    box-shadow: 0 4px 16px rgba(70,106,90,0.25);
+  }
+
+  .btn-primary:active {
+    transform: scale(0.98);
+  }
+
+  .btn-primary:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .error-msg {
+    background: var(--down-bg);
+    color: var(--down);
+    padding: 0.6rem 0.85rem;
+    border-radius: 12px;
+    font-size: var(--text-xs);
+    margin-bottom: 1rem;
+    display: none;
+    border: 1px solid rgba(168,71,71,0.18);
+  }
+
+  .error-msg.visible {
+    display: block;
+    animation: fadeSlideUp 200ms ease;
+  }
+
+  .info-msg {
+    text-align: center;
+    font-size: var(--text-xs);
+    color: var(--ink-soft);
+    margin-top: 1rem;
+  }
+
+  .info-msg a {
+    color: var(--accent);
+    text-decoration: none;
+    font-weight: 500;
+  }
+
+  .info-msg a:hover {
+    color: var(--accent-strong);
+  }
+</style>
+</head>
+<body>
+<div class="page-shell">
+  <div class="login-card">
+    <div class="logo">
+      <h1>ngrok Dashboard</h1>
+      <p>Sign in to continue</p>
+    </div>
+
+    <div id="error" class="error-msg"></div>
+
+    <div class="auth-options">
+      <div class="auth-tab active" id="tab-password" onclick="switchTab('password')">
+        <span class="tab-icon">&#x1F510;</span>
+        <span>Password</span>
+      </div>
+      <div class="auth-tab google-tab" id="tab-google" onclick="switchTab('google')">
+        <span class="tab-icon">G</span>
+        <span>Google</span>
+      </div>
+    </div>
+
+    <form id="password-form" class="password-form visible" onsubmit="return handlePasswordLogin(event)">
+      <div class="form-group">
+        <label for="password">Password</label>
+        <input type="password" id="password" placeholder="Enter your password" autofocus>
+      </div>
+      <button type="submit" class="btn btn-primary" id="btn-login">Sign In</button>
+    </form>
+
+    <div id="google-section" style="display:none;">
+      <button class="btn btn-primary" style="background:#4285f4;" onclick="handleGoogleLogin()">
+        Sign in with Google
+      </button>
+    </div>
+
+  </div>
+</div>
+
+<script>
+let activeTab = 'password';
+
+function switchTab(tab) {
+  activeTab = tab;
+  document.getElementById('tab-password').classList.toggle('active', tab === 'password');
+  document.getElementById('tab-google').classList.toggle('active', tab === 'google');
+  document.getElementById('password-form').classList.toggle('visible', tab === 'password');
+  document.getElementById('google-section').style.display = tab === 'google' ? 'block' : 'none';
+  hideError();
+}
+
+function showError(msg) {
+  const el = document.getElementById('error');
+  el.textContent = msg;
+  el.classList.add('visible');
+}
+
+function hideError() {
+  const el = document.getElementById('error');
+  el.classList.remove('visible');
+}
+
+function handlePasswordLogin(e) {
+  e.preventDefault();
+  const password = document.getElementById('password').value;
+  if (!password) {
+    showError('Please enter your password.');
+    return false;
+  }
+
+  const btn = document.getElementById('btn-login');
+  btn.disabled = true;
+  btn.textContent = 'Signing in...';
+  hideError();
+
+  fetch('/auth/password', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ password })
+  })
+  .then(res => res.json())
+  .then(data => {
+    if (data.ok) {
+      window.location.href = data.redirect || '/dash';
+    } else {
+      showError(data.error || 'Invalid password.');
+    }
+  })
+  .catch(err => {
+    showError('Connection error. Please try again.');
+  })
+  .finally(() => {
+    btn.disabled = false;
+    btn.textContent = 'Sign In';
+    document.getElementById('password').value = '';
+  });
+
+  return false;
+}
+
+function handleGoogleLogin() {
+  window.location.href = '/auth/google';
+}
+
+// Check URL params for error messages from redirects
+const params = new URLSearchParams(window.location.search);
+if (params.get('error')) {
+  showError(decodeURIComponent(params.get('error')));
+}
+
+// Hide unavailable auth methods
+(function init() {
+  const hasPassword = window.__AUTH_PASSWORD !== false;
+  const hasGoogle = window.__AUTH_GOOGLE !== false;
+  if (!hasPassword) document.getElementById('tab-password').style.display = 'none';
+  if (!hasGoogle) document.getElementById('tab-google').style.display = 'none';
+  // If only Google is available, activate it
+  if (!hasPassword && hasGoogle) {
+    switchTab('google');
+  }
+  // Handle "no methods" case from server
+  if (!hasPassword && !hasGoogle) {
+    document.querySelector('.auth-options').style.display = 'none';
+    document.getElementById('password-form').style.display = 'none';
+  }
+})();
+</script>
+</body>
+</html>

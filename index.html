@@ -139,6 +139,25 @@
   .status-disconnected { background: var(--down-bg); color: var(--down); border: 1px solid rgba(168,71,71,0.18); }
   .status-disconnected .pill-dot { background: var(--down); }
 
+  .btn-signout {
+    padding: 0.35rem 0.9rem;
+    border-radius: var(--radius-btn);
+    border: 1px solid rgba(32,48,58,0.15);
+    background: rgba(255,255,255,0.5);
+    color: var(--ink-soft);
+    font-size: var(--text-xs);
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 180ms ease;
+    font-family: inherit;
+    white-space: nowrap;
+  }
+  .btn-signout:hover {
+    border-color: rgba(168,71,71,0.25);
+    color: var(--down);
+    background: rgba(168,71,71,0.06);
+  }
+
   .ngrok-error-msg {
     margin-top: 0.5rem;
     font-size: var(--text-xs);
@@ -266,6 +285,7 @@
     display: flex;
     align-items: center;
     gap: 0.75rem;
+    margin-bottom: 0.4rem;
   }
 
   .tunnel-btn {
@@ -337,8 +357,7 @@
     display: inline-flex;
     align-items: center;
     gap: 0.35rem;
-    margin-top: 0.9rem;
-    padding: 0.3rem 0;
+    margin-top: 1rem;  /* keep clear of action buttons */
     font-size: var(--text-xs);
     color: var(--ink-soft);
     cursor: pointer;
@@ -554,6 +573,7 @@
       <span id="ngrok-status" class="status-pill status-disconnected">
         <span class="pill-dot"></span>disconnected
       </span>
+      <button class="btn-signout" onclick="handleSignOut()" title="Sign out and clear session">Sign Out</button>
     </div>
     <div id="ngrok-error" class="ngrok-error-msg"></div>
   </div>
@@ -625,6 +645,10 @@ function tunnelButtonLabel(state) {
 async function fetchState() {
   try {
     const resp = await fetch(`${API}/servers`);
+    if (resp.status === 401) {
+      window.location.href = '/auth/login';
+      return;
+    }
     const data = await resp.json();
     renderHeader(data.ngrokUrl, data.ngrokError);
     renderServers(data.servers, data.target);
@@ -1001,6 +1025,12 @@ function renderScheduler(data) {
 
 fetchState();
 setInterval(fetchState, 10000);
+
+function handleSignOut() {
+  fetch('/auth/logout', { method: 'POST' })
+    .then(() => { window.location.href = '/auth/login'; })
+    .catch(() => { window.location.href = '/auth/login'; });
+}
 </script>
 </body>
 </html>

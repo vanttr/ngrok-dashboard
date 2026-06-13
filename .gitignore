@@ -24,8 +24,5 @@ server-stderr.txt
 .DS_Store
 Thumbs.db
 
-# Editor files
-.vscode/
-.idea/
-*.swp
-*.swo
+# Auth secrets (template committed with empty values — local edits are gitignored)
+auth.json

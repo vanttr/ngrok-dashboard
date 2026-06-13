@@ -2,6 +2,7 @@
 const { spawn, execFile } = require('child_process');
 const http = require('http');
 const https = require('https');
+const crypto = require('crypto');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -17,7 +18,319 @@ try {
 const SWITCHER_PORT = process.env.SWITCHER_PORT || CONFIG.switcherPort || 9595;
 const SWITCHER_HOST = process.env.SWITCHER_HOST || '127.0.0.1';
 const NO_NGROK = !!process.env.NO_NGROK;
-const NGROK_OAUTH = '--oauth=google --oauth-allow-email=vant.tr@gmail.com';
+// ---- Authentication Config ----
+let AUTH;
+let AUTH_ACTIVE = false;
+try {
+  AUTH = JSON.parse(fs.readFileSync(path.join(__dirname, 'auth.json'), 'utf8'));
+  // Auto-generate session secret if blank
+  if (!AUTH.sessionSecret || AUTH.sessionSecret.length < 16) {
+    AUTH.sessionSecret = crypto.randomBytes(32).toString('hex');
+    fs.writeFileSync(path.join(__dirname, 'auth.json'), JSON.stringify(AUTH, null, 2), 'utf8');
+    console.log('Generated new session secret in auth.json');
+  }
+  // Check if any auth method is actually configured
+  const hasPassword = !!(AUTH.password && AUTH.password.hash);
+  const hasGoogle = !!(AUTH.google && AUTH.google.clientId);
+  if (hasPassword || hasGoogle) {
+    AUTH_ACTIVE = true;
+    const methods = [];
+    if (hasPassword) methods.push('password');
+    if (hasGoogle) methods.push('Google');
+    console.log(`Authentication enabled: ${methods.join(' + ')}`);
+  } else {
+    console.log('auth.json loaded but no methods configured — running WITHOUT authentication');
+    console.log('  To enable: edit auth.json and set a password or Google OAuth credentials, then restart.');
+  }
+} catch (e) {
+  AUTH = null;
+  console.log('auth.json not found — running WITHOUT authentication');
+}
+
+// ---- Session Store ----
+const SESSION_COOKIE = 'ngrok_dash_session';
+const SESSION_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+const sessions = new Map();
+
+// Periodic cleanup of expired sessions
+setInterval(() => {
+  const now = Date.now();
+  for (const [id, s] of sessions) {
+    if (now - s.createdAt > SESSION_TTL_MS) sessions.delete(id);
+  }
+}, 5 * 60 * 1000);
+
+// ---- Password Hashing ----
+function hashPassword(password) {
+  const salt = crypto.randomBytes(16).toString('hex');
+  const hash = crypto.scryptSync(password, salt, 64).toString('hex');
+  return { salt, hash };
+}
+
+function verifyPassword(password, stored) {
+  if (!stored || !stored.salt || !stored.hash) return false;
+  try {
+    const derived = crypto.scryptSync(password, stored.salt, 64).toString('hex');
+    return crypto.timingSafeEqual(Buffer.from(derived, 'hex'), Buffer.from(stored.hash, 'hex'));
+  } catch {
+    return false;
+  }
+}
+
+// ---- Cookie Helpers ----
+function parseCookies(req) {
+  const h = req.headers.cookie;
+  if (!h) return {};
+  const out = {};
+  for (const part of h.split(';')) {
+    const idx = part.indexOf('=');
+    if (idx === -1) continue;
+    out[part.substring(0, idx).trim()] = decodeURIComponent(part.substring(idx + 1).trim());
+  }
+  return out;
+}
+
+function signCookieVal(sessionId) {
+  const sig = crypto.createHmac('sha256', AUTH.sessionSecret).update(sessionId).digest('base64url');
+  return `${sessionId}.${sig}`;
+}
+
+function unsignCookieVal(signed) {
+  const dot = signed.lastIndexOf('.');
+  if (dot === -1) return null;
+  const sid = signed.substring(0, dot);
+  const sig = signed.substring(dot + 1);
+  const expected = crypto.createHmac('sha256', AUTH.sessionSecret).update(sid).digest('base64url');
+  if (expected.length !== sig.length) return null;
+  try {
+    if (!crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(sig))) return null;
+  } catch { return null; }
+  return sid;
+}
+
+function getSession(req) {
+  if (!AUTH_ACTIVE) return null;
+  const cookies = parseCookies(req);
+  const raw = cookies[SESSION_COOKIE];
+  if (!raw) return null;
+  const sid = unsignCookieVal(raw);
+  if (!sid) return null;
+  const s = sessions.get(sid);
+  if (!s) return null;
+  if (Date.now() - s.createdAt > SESSION_TTL_MS) { sessions.delete(sid); return null; }
+  return { ...s, id: sid };
+}
+
+function createSession(email, provider) {
+  const sid = crypto.randomUUID();
+  sessions.set(sid, { email, provider, createdAt: Date.now() });
+  return sid;
+}
+
+// ---- Auth Route Helpers ----
+function setSessionCookie(res, sessionId) {
+  const signed = signCookieVal(sessionId);
+  const maxAge = Math.floor(SESSION_TTL_MS / 1000);
+  res.setHeader('Set-Cookie',
+    `${SESSION_COOKIE}=${encodeURIComponent(signed)}; ` +
+    `Max-Age=${maxAge}; Path=/; HttpOnly; SameSite=Lax`);
+}
+
+function clearSessionCookie(res) {
+  res.setHeader('Set-Cookie',
+    `${SESSION_COOKIE}=; Max-Age=0; Path=/; HttpOnly; SameSite=Lax`);
+}
+
+function redirect(res, location) {
+  res.setHeader('Location', location);
+  res.writeHead(302);
+  res.end();
+}
+
+function jsonResponse(res, status, obj) {
+  res.setHeader('Content-Type', 'application/json');
+  res.writeHead(status);
+  res.end(JSON.stringify(obj));
+}
+
+// ---- Auth Route Handlers ----
+function serveLoginPage(res, errorMsg) {
+  try {
+    let html = fs.readFileSync(path.join(__dirname, 'login.html'), 'utf8');
+    if (!AUTH_ACTIVE) {
+      // No auth config → redirect straight to dash
+      redirect(res, '/dash');
+      return;
+    }
+    // Check which auth methods are available
+    const hasPassword = !!(AUTH.password && AUTH.password.hash);
+    const hasGoogle = !!(AUTH.google && AUTH.google.clientId);
+    if (!hasPassword && !hasGoogle) {
+      // No methods configured — show setup
+      html = html.replace('<p>Sign in to continue</p>',
+        '<p style="color:#a84747;">No authentication methods configured. Edit auth.json to set a password or Google OAuth credentials.</p>');
+    }
+    // Inject method availability into the page
+    const pwAvailable = hasPassword ? 'true' : 'false';
+    const googAvailable = hasGoogle ? 'true' : 'false';
+    html = html.replace('</body>',
+      `<script>window.__AUTH_PASSWORD=${pwAvailable};window.__AUTH_GOOGLE=${googAvailable};</script></body>`);
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.writeHead(200);
+    res.end(html);
+  } catch (e) {
+    res.writeHead(500);
+    res.end('Login page error');
+  }
+}
+
+function getOAuthRedirectUri(req) {
+  const proto = req.headers['x-forwarded-proto'] || 'http';
+  const host = req.headers['x-forwarded-host'] || req.headers.host || `${SWITCHER_HOST}:${SWITCHER_PORT}`;
+  return `${proto}://${host}/auth/google/callback`;
+}
+
+function handleGoogleLogin(req, res) {
+  if (!AUTH || !AUTH.google || !AUTH.google.clientId) {
+    serveLoginPage(res, 'Google authentication is not configured.');
+    return;
+  }
+  const state = crypto.randomBytes(16).toString('hex');
+  sessions.set(`oauth:${state}`, { createdAt: Date.now() });
+  const params = new URLSearchParams({
+    client_id: AUTH.google.clientId,
+    redirect_uri: getOAuthRedirectUri(req),
+    response_type: 'code',
+    scope: 'openid email profile',
+    state,
+    access_type: 'online',
+  });
+  redirect(res, `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`);
+}
+
+function handleGoogleCallback(req, res) {
+  const url = new URL(req.url, `http://${SWITCHER_HOST}:${SWITCHER_PORT}`);
+  const code = url.searchParams.get('code');
+  const state = url.searchParams.get('state');
+  const errorParam = url.searchParams.get('error');
+
+  if (errorParam) {
+    redirect(res, `/auth/login?error=${encodeURIComponent('Google sign-in was cancelled or denied.')}`);
+    return;
+  }
+
+  if (!state || !sessions.has(`oauth:${state}`)) {
+    redirect(res, `/auth/login?error=${encodeURIComponent('Invalid state token. Please try again.')}`);
+    return;
+  }
+  sessions.delete(`oauth:${state}`);
+
+  if (!code) {
+    redirect(res, `/auth/login?error=${encodeURIComponent('No authorization code received.')}`);
+    return;
+  }
+
+  // Exchange code for token
+  const tokenBody = new URLSearchParams({
+    code,
+    client_id: AUTH.google.clientId,
+    client_secret: AUTH.google.clientSecret,
+    redirect_uri: getOAuthRedirectUri(req),
+    grant_type: 'authorization_code',
+  }).toString();
+
+  const tokenReq = https.request({
+    hostname: 'oauth2.googleapis.com',
+    path: '/token',
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+      'Content-Length': Buffer.byteLength(tokenBody),
+    },
+  }, (tokenRes) => {
+    let data = '';
+    tokenRes.on('data', (c) => { data += c; });
+    tokenRes.on('end', () => {
+      try {
+        const parsed = JSON.parse(data);
+        if (parsed.error) {
+          console.error('Google token error:', parsed);
+          redirect(res, `/auth/login?error=${encodeURIComponent('Google authentication failed.')}`);
+          return;
+        }
+        // Fetch user info
+        https.get({
+          hostname: 'www.googleapis.com',
+          path: '/oauth2/v3/userinfo',
+          headers: { 'Authorization': `Bearer ${parsed.access_token}` },
+        }, (infoRes) => {
+          let infoData = '';
+          infoRes.on('data', (c) => { infoData += c; });
+          infoRes.on('end', () => {
+            try {
+              const user = JSON.parse(infoData);
+              if (!user.email) {
+                redirect(res, `/auth/login?error=${encodeURIComponent('Could not retrieve email from Google.')}`);
+                return;
+              }
+              // Check allowed emails
+              const allowed = AUTH.allowedEmails || [];
+              if (allowed.length > 0 && !allowed.includes(user.email)) {
+                redirect(res, `/auth/login?error=${encodeURIComponent(`Email ${user.email} is not authorized.`)}`);
+                return;
+              }
+              // Success — create session
+              const sid = createSession(user.email, 'google');
+              setSessionCookie(res, sid);
+              redirect(res, '/dash');
+            } catch (e) {
+              redirect(res, `/auth/login?error=${encodeURIComponent('Failed to parse user info from Google.')}`);
+            }
+          });
+        }).on('error', () => {
+          redirect(res, `/auth/login?error=${encodeURIComponent('Failed to reach Google API.')}`);
+        });
+      } catch (e) {
+        redirect(res, `/auth/login?error=${encodeURIComponent('Invalid response from Google.')}`);
+      }
+    });
+  });
+
+  tokenReq.on('error', () => {
+    redirect(res, `/auth/login?error=${encodeURIComponent('Failed to reach Google token endpoint.')}`);
+  });
+  tokenReq.write(tokenBody);
+  tokenReq.end();
+}
+
+function handlePasswordLogin(req, res) {
+  return readBody(req).then(body => {
+    let password;
+    try { password = JSON.parse(body).password; } catch { password = ''; }
+    if (!password) {
+      jsonResponse(res, 400, { ok: false, error: 'Password is required.' });
+      return;
+    }
+    if (!AUTH || !AUTH.password || !AUTH.password.hash) {
+      jsonResponse(res, 400, { ok: false, error: 'Password authentication is not configured.' });
+      return;
+    }
+    if (!verifyPassword(password, AUTH.password)) {
+      jsonResponse(res, 401, { ok: false, error: 'Invalid password.' });
+      return;
+    }
+    const sid = createSession('admin', 'password');
+    setSessionCookie(res, sid);
+    jsonResponse(res, 200, { ok: true, redirect: '/dash' });
+  });
+}
+
+function handleLogout(req, res) {
+  const session = getSession(req);
+  if (session) sessions.delete(session.id);
+  clearSessionCookie(res);
+  redirect(res, '/auth/login');
+}
 
 // ---- Ngrok Process Manager ----
 let ngrokProcess = null;
@@ -31,7 +344,7 @@ function startNgrok() {
   }
 
   return new Promise((resolve, reject) => {
-    const args = ['http', String(SWITCHER_PORT), ...NGROK_OAUTH.split(' '), '--log=stdout', '--log-format=json'];
+    const args = ['http', String(SWITCHER_PORT), '--log=stdout', '--log-format=json'];
     ngrokProcess = spawn('ngrok', args, { stdio: ['ignore', 'pipe', 'pipe'] });
 
     let resolved = false;
@@ -1158,6 +1471,57 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(204);
     res.end();
     return;
+  }
+
+  // ---- Authentication Gate ----
+  const isAuthRoute = pathname === '/auth/login' || pathname === '/auth/password' ||
+    pathname === '/auth/google' || pathname === '/auth/google/callback' ||
+    pathname === '/auth/logout';
+  const isPublic = pathname === '/ngrok-skip-browser-warning' || isAuthRoute;
+
+  if (AUTH_ACTIVE && !isPublic) {
+    const session = getSession(req);
+    if (!session) {
+      // Redirect browser requests to login; API clients get 401
+      const accept = req.headers.accept || '';
+      if (accept.includes('text/html') || accept.includes('*/*')) {
+        redirect(res, '/auth/login');
+      } else {
+        jsonResponse(res, 401, { error: 'Authentication required.' });
+      }
+      return;
+    }
+    // Attach session for downstream use
+    req.__session = session;
+  }
+
+  // ---- Auth Routes ----
+  if (isAuthRoute) {
+    if (pathname === '/auth/login' && req.method === 'GET') {
+      // If already logged in, redirect to dash
+      if (AUTH && getSession(req)) {
+        redirect(res, '/dash');
+        return;
+      }
+      serveLoginPage(res);
+      return;
+    }
+    if (pathname === '/auth/password' && req.method === 'POST') {
+      await handlePasswordLogin(req, res);
+      return;
+    }
+    if (pathname === '/auth/google' && req.method === 'GET') {
+      handleGoogleLogin(req, res);
+      return;
+    }
+    if (pathname === '/auth/google/callback' && req.method === 'GET') {
+      handleGoogleCallback(req, res);
+      return;
+    }
+    if (pathname === '/auth/logout' && req.method === 'POST') {
+      handleLogout(req, res);
+      return;
+    }
   }
 
   // ---- API Routes ----
