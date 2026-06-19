@@ -60,6 +60,43 @@ setInterval(() => {
   }
 }, 5 * 60 * 1000);
 
+// ---- Rate Limiting ----
+const RATE_LIMIT = { maxAttempts: 5, windowMs: 15 * 60 * 1000 }; // 5 attempts per 15 min
+const rateLimitStore = new Map();
+
+// Periodic cleanup of expired rate-limit windows
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, entry] of rateLimitStore) {
+    if (now - entry.windowStart > RATE_LIMIT.windowMs) rateLimitStore.delete(key);
+  }
+}, 5 * 60 * 1000);
+
+function getClientIp(req) {
+  const forwarded = req.headers['x-forwarded-for'];
+  if (forwarded) {
+    return forwarded.split(',')[0].trim();
+  }
+  return req.socket?.remoteAddress || '127.0.0.1';
+}
+
+function checkRateLimit(key, store, config) {
+  store = store || rateLimitStore;
+  config = config || RATE_LIMIT;
+  const now = Date.now();
+  const entry = store.get(key);
+  if (!entry || now - entry.windowStart > config.windowMs) {
+    store.set(key, { count: 1, windowStart: now });
+    return { allowed: true };
+  }
+  entry.count++;
+  if (entry.count > config.maxAttempts) {
+    const retryAfter = Math.ceil((entry.windowStart + config.windowMs - now) / 1000);
+    return { allowed: false, retryAfter };
+  }
+  return { allowed: true };
+}
+
 // ---- Password Hashing ----
 function hashPassword(password) {
   const salt = crypto.randomBytes(16).toString('hex');
@@ -176,6 +213,8 @@ function serveLoginPage(res, errorMsg) {
     html = html.replace('</body>',
       `<script>window.__AUTH_PASSWORD=${pwAvailable};window.__AUTH_GOOGLE=${googAvailable};</script></body>`);
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.setHeader('Content-Security-Policy',
+      "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://fonts.gstatic.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'");
     res.writeHead(200);
     res.end(html);
   } catch (e) {
@@ -304,6 +343,15 @@ function handleGoogleCallback(req, res) {
 }
 
 function handlePasswordLogin(req, res) {
+  // Rate limit check before any processing
+  const ip = getClientIp(req);
+  const rl = checkRateLimit(ip);
+  if (!rl.allowed) {
+    res.setHeader('Retry-After', String(rl.retryAfter));
+    jsonResponse(res, 429, { ok: false, error: 'Too many login attempts. Please wait and try again.' });
+    return;
+  }
+
   return readBody(req).then(body => {
     let password;
     try { password = JSON.parse(body).password; } catch { password = ''; }
@@ -1449,28 +1497,21 @@ let ngrokError = null;     // error message if ngrok failed to start
 // ---- HTTP Server ----
 const server = http.createServer(async (req, res) => {
   // Common headers
-  res.setHeader('ngrok-skip-browser-warning', 'true');
+  // NOTE: ngrok-skip-browser-warning must be a REQUEST header from the client,
+  // not a response header. Setting it here has no effect on ngrok's interstitial.
+  // Bypass methods: (1) non-browser User-Agent, (2) request header, (3) paid account.
+  // See docs/ai/references/ngrok-browser-warning.md
 
   const url = new URL(req.url, `http://${SWITCHER_HOST}:${SWITCHER_PORT}`);
   const pathname = url.pathname;
   console.log(`${new Date().toISOString().slice(11,19)} ${req.method} ${pathname}`);
 
-  // CORS preflight — only for switcher API routes, NOT for proxied paths
-  // Dashboard is same-origin so never needs CORS; proxied paths must reach the target
-  const isSwitcherApiRoute = pathname === '/api/servers' ||
-    pathname === '/api/target' ||
-    pathname === '/api/health' ||
-    pathname === '/api/scheduler' ||
-    pathname === '/api/scheduler/fire' ||
-    /^\/api\/servers\/\d+\/start$/.test(pathname);
-
-  if (req.method === 'OPTIONS' && isSwitcherApiRoute) {
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-    res.writeHead(204);
-    res.end();
-    return;
+  // ---- Security Headers (applied to all switcher responses; proxied content excluded) ----
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  const clientProto = req.headers['x-forwarded-proto'];
+  if (clientProto === 'https') {
+    res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
   }
 
   // ---- Authentication Gate ----
@@ -1528,7 +1569,6 @@ const server = http.createServer(async (req, res) => {
   if (pathname === '/api/servers') {
     const list = await refreshAllServers();
     res.setHeader('Content-Type', 'application/json');
-    res.setHeader('Access-Control-Allow-Origin', '*');
     res.writeHead(200);
     res.end(JSON.stringify({
       servers: list,
@@ -1541,7 +1581,6 @@ const server = http.createServer(async (req, res) => {
 
   if (pathname === '/api/target' && req.method === 'GET') {
     res.setHeader('Content-Type', 'application/json');
-    res.setHeader('Access-Control-Allow-Origin', '*');
     res.writeHead(200);
     res.end(JSON.stringify({ target: currentTarget, ngrokUrl }));
     return;
@@ -1557,21 +1596,18 @@ const server = http.createServer(async (req, res) => {
         const found = serverStatuses[port];
         if (!found) {
           res.setHeader('Content-Type', 'application/json');
-          res.setHeader('Access-Control-Allow-Origin', '*');
-          res.writeHead(400);
+                res.writeHead(400);
           res.end(JSON.stringify({ ok: false, error: `Port ${port} is not a known server` }));
           return;
         }
         currentTarget = { port: found.actualPort || found.configuredPort, name: found.name };
       }
       res.setHeader('Content-Type', 'application/json');
-      res.setHeader('Access-Control-Allow-Origin', '*');
-      res.writeHead(200);
+        res.writeHead(200);
       res.end(JSON.stringify({ ok: true, target: currentTarget }));
     } catch (e) {
       res.setHeader('Content-Type', 'application/json');
-      res.setHeader('Access-Control-Allow-Origin', '*');
-      res.writeHead(400);
+        res.writeHead(400);
       res.end(JSON.stringify({ ok: false, error: 'Invalid JSON body' }));
     }
     return;
@@ -1584,24 +1620,21 @@ const server = http.createServer(async (req, res) => {
 
     if (!serverEntry) {
       res.setHeader('Content-Type', 'application/json');
-      res.setHeader('Access-Control-Allow-Origin', '*');
-      res.writeHead(400);
+        res.writeHead(400);
       res.end(JSON.stringify({ ok: false, error: 'Unknown port' }));
       return;
     }
 
     if (!serverEntry.devScript) {
       res.setHeader('Content-Type', 'application/json');
-      res.setHeader('Access-Control-Allow-Origin', '*');
-      res.writeHead(400);
+        res.writeHead(400);
       res.end(JSON.stringify({ ok: false, error: `No devScript configured for ${serverEntry.name}` }));
       return;
     }
 
     if (!fs.existsSync(serverEntry.devScript)) {
       res.setHeader('Content-Type', 'application/json');
-      res.setHeader('Access-Control-Allow-Origin', '*');
-      res.writeHead(400);
+        res.writeHead(400);
       res.end(JSON.stringify({ ok: false, error: `dev.ps1 not found at ${serverEntry.devScript}` }));
       return;
     }
@@ -1636,14 +1669,12 @@ const server = http.createServer(async (req, res) => {
       console.log(`Started ${serverEntry.name} via ${serverEntry.devScript}${argsStr} (PID: ${child.pid})`);
 
       res.setHeader('Content-Type', 'application/json');
-      res.setHeader('Access-Control-Allow-Origin', '*');
-      res.writeHead(200);
+        res.writeHead(200);
       res.end(JSON.stringify({ ok: true, starting: true }));
     } catch (e) {
       console.error(`Failed to start ${serverEntry.name}: ${e.message}`);
       res.setHeader('Content-Type', 'application/json');
-      res.setHeader('Access-Control-Allow-Origin', '*');
-      res.writeHead(500);
+        res.writeHead(500);
       res.end(JSON.stringify({ ok: false, error: `Failed to spawn process: ${e.message}` }));
     }
     return;
@@ -1657,7 +1688,6 @@ const server = http.createServer(async (req, res) => {
 
   if (pathname === '/api/health') {
     res.setHeader('Content-Type', 'application/json');
-    res.setHeader('Access-Control-Allow-Origin', '*');
     res.writeHead(200);
     res.end(JSON.stringify({
       status: 'ok',
@@ -1670,7 +1700,6 @@ const server = http.createServer(async (req, res) => {
 
   if (pathname === '/api/scheduler') {
     res.setHeader('Content-Type', 'application/json');
-    res.setHeader('Access-Control-Allow-Origin', '*');
     res.writeHead(200);
     res.end(JSON.stringify({
       enabled: schedulerState.enabled,
@@ -1698,7 +1727,6 @@ const server = http.createServer(async (req, res) => {
       console.error('Scheduler: manual fire error:', err);
     });
     res.setHeader('Content-Type', 'application/json');
-    res.setHeader('Access-Control-Allow-Origin', '*');
     res.writeHead(202);
     res.end(JSON.stringify({ ok: true, message: 'Fire triggered' }));
     return;
@@ -1714,6 +1742,8 @@ const server = http.createServer(async (req, res) => {
       try {
         const html = fs.readFileSync(path.join(__dirname, 'index.html'), 'utf8');
         res.setHeader('Content-Type', 'text/html; charset=utf-8');
+        res.setHeader('Content-Security-Policy',
+          "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://fonts.gstatic.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'");
         res.writeHead(200);
         res.end(html);
       } catch (e) {
@@ -1727,7 +1757,6 @@ const server = http.createServer(async (req, res) => {
   // ---- Proxy (catch-all) ----
   if (!currentTarget) {
     res.setHeader('Content-Type', 'application/json');
-    res.setHeader('Access-Control-Allow-Origin', '*');
     res.writeHead(503);
     res.end(JSON.stringify({ error: 'No target selected. Visit /dash to choose a server.' }));
     return;
@@ -1805,6 +1834,9 @@ const server = http.createServer(async (req, res) => {
       if (!filteredHeaders['ngrok-skip-browser-warning']) {
         filteredHeaders['ngrok-skip-browser-warning'] = 'true';
       }
+
+      // Remove switcher-level X-Frame-Options so proxied backends control framing
+      res.removeHeader('X-Frame-Options');
 
       // Rewrite HTML bodies: replace hardcoded localhost:PORT URLs with the
       // public origin so HTMX attributes, form actions, and links stay on-proxy
