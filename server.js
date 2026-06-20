@@ -19,6 +19,14 @@ const SWITCHER_PORT = process.env.SWITCHER_PORT || CONFIG.switcherPort || 9595;
 const SWITCHER_HOST = process.env.SWITCHER_HOST || '127.0.0.1';
 const NO_NGROK = !!process.env.NO_NGROK;
 const FAVORITES_PATH = path.join(__dirname, 'opencode-dash-config.json');
+
+// Resolve opencode binary path (npm global install on Windows)
+function resolveOpencodePath() {
+  const npmBin = path.join(os.homedir(), 'AppData', 'Roaming', 'npm', 'node_modules', 'opencode-ai', 'bin', 'opencode.exe');
+  if (fs.existsSync(npmBin)) return npmBin;
+  return 'opencode'; // fallback to PATH
+}
+const OPENCODE_PATH = resolveOpencodePath();
 // ---- Authentication Config ----
 let AUTH;
 let AUTH_ACTIVE = false;
@@ -1747,7 +1755,7 @@ const server = http.createServer(async (req, res) => {
       } catch { /* provider config optional */ }
 
       const result = await new Promise((resolve) => {
-        const child = spawn('opencode', ['models', '--verbose'], {
+        const child = spawn(OPENCODE_PATH, ['models', '--verbose'], {
           stdio: ['ignore', 'pipe', 'ignore'],
           timeout: 10000
         });
