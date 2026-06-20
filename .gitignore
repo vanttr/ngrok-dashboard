@@ -26,3 +26,6 @@ Thumbs.db
 
 # Auth secrets (template committed with empty values — local edits are gitignored)
 auth.json
+
+# OpenCode config dashboard — local favorites store
+opencode-dash-config.json

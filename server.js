@@ -18,6 +18,7 @@ try {
 const SWITCHER_PORT = process.env.SWITCHER_PORT || CONFIG.switcherPort || 9595;
 const SWITCHER_HOST = process.env.SWITCHER_HOST || '127.0.0.1';
 const NO_NGROK = !!process.env.NO_NGROK;
+const FAVORITES_PATH = path.join(__dirname, 'opencode-dash-config.json');
 // ---- Authentication Config ----
 let AUTH;
 let AUTH_ACTIVE = false;
@@ -1732,6 +1733,179 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // ---- OpenCode Config API ----
+
+  // GET /api/opencode/models — spawn opencode CLI, parse NDJSON output
+  if (pathname === '/api/opencode/models' && req.method === 'GET') {
+    try {
+      const opencodeConfigPath = path.join(os.homedir(), '.config', 'opencode', 'opencode.json');
+      let providerConfig = {};
+      try {
+        const ocRaw = fs.readFileSync(opencodeConfigPath, 'utf8');
+        const oc = JSON.parse(ocRaw);
+        if (oc.provider) providerConfig = oc.provider;
+      } catch { /* provider config optional */ }
+
+      const result = await new Promise((resolve) => {
+        const child = spawn('opencode', ['models', '--verbose'], {
+          stdio: ['ignore', 'pipe', 'ignore'],
+          timeout: 10000
+        });
+        let stdout = '';
+        child.stdout.on('data', (data) => { stdout += data.toString(); });
+        child.on('error', (err) => {
+          resolve({
+            ok: false,
+            error: `opencode CLI not found or failed to start: ${err.message}. Is opencode installed and on your PATH?`
+          });
+        });
+        child.on('close', (code) => {
+          if (code !== 0) {
+            resolve({ ok: false, error: `opencode CLI exited with code ${code}` });
+          } else {
+            try {
+              const models = parseModelsNdjson(stdout);
+              const providers = deriveProviders(models, providerConfig);
+              resolve({ ok: true, models, providers });
+            } catch (e) {
+              resolve({ ok: false, error: `Failed to parse model output: ${e.message}` });
+            }
+          }
+        });
+      });
+      jsonResponse(res, result.ok ? 200 : 500, result);
+    } catch (e) {
+      jsonResponse(res, 500, { ok: false, error: e.message });
+    }
+    return;
+  }
+
+  // GET /api/opencode/config — read subagent model assignments
+  if (pathname === '/api/opencode/config' && req.method === 'GET') {
+    try {
+      const opencodeConfigPath = path.join(os.homedir(), '.config', 'opencode', 'opencode.json');
+      if (!fs.existsSync(opencodeConfigPath)) {
+        jsonResponse(res, 404, { ok: false, error: `opencode config not found at ${opencodeConfigPath}` });
+        return;
+      }
+      const agents = readSubagentConfig(opencodeConfigPath);
+      jsonResponse(res, 200, { ok: true, agents });
+    } catch (e) {
+      const msg = e.code === 'ENOENT'
+        ? `opencode config not found at ${path.join(os.homedir(), '.config', 'opencode', 'opencode.json')}`
+        : `Failed to read opencode config: ${e.message}`;
+      jsonResponse(res, 500, { ok: false, error: msg });
+    }
+    return;
+  }
+
+  // POST /api/opencode/config — save subagent model assignments
+  if (pathname === '/api/opencode/config' && req.method === 'POST') {
+    try {
+      const body = await readBody(req);
+      let payload;
+      try { payload = JSON.parse(body); } catch {
+        jsonResponse(res, 400, { ok: false, error: 'Invalid JSON body' });
+        return;
+      }
+      if (!payload.agents || typeof payload.agents !== 'object') {
+        jsonResponse(res, 400, { ok: false, error: 'Missing or invalid "agents" field. Expected { agents: { name: "provider/model", ... } }' });
+        return;
+      }
+      const opencodeConfigPath = path.join(os.homedir(), '.config', 'opencode', 'opencode.json');
+      if (!fs.existsSync(opencodeConfigPath)) {
+        jsonResponse(res, 404, { ok: false, error: `opencode config not found at ${opencodeConfigPath}` });
+        return;
+      }
+      patchAgentModels(opencodeConfigPath, payload.agents);
+      jsonResponse(res, 200, { ok: true, message: 'Config saved. Restart opencode for changes to take effect.' });
+    } catch (e) {
+      if (e.message.startsWith('Unknown agent:')) {
+        jsonResponse(res, 400, { ok: false, error: e.message });
+      } else {
+        jsonResponse(res, 500, { ok: false, error: `Failed to save config: ${e.message}` });
+      }
+    }
+    return;
+  }
+
+  // GET /api/opencode/favorites — return favorites list
+  if (pathname === '/api/opencode/favorites' && req.method === 'GET') {
+    try {
+      if (!fs.existsSync(FAVORITES_PATH)) {
+        jsonResponse(res, 200, { ok: true, favorites: [] });
+        return;
+      }
+      const data = JSON.parse(fs.readFileSync(FAVORITES_PATH, 'utf8'));
+      jsonResponse(res, 200, { ok: true, favorites: data.favorites || [] });
+    } catch (e) {
+      jsonResponse(res, 500, { ok: false, error: `Failed to read favorites: ${e.message}` });
+    }
+    return;
+  }
+
+  // POST /api/opencode/favorites — add or remove a favorite
+  if (pathname === '/api/opencode/favorites' && req.method === 'POST') {
+    try {
+      const body = await readBody(req);
+      let payload;
+      try { payload = JSON.parse(body); } catch {
+        jsonResponse(res, 400, { ok: false, error: 'Invalid JSON body' });
+        return;
+      }
+      const { action, provider, model } = payload;
+      if (!action || !['add', 'remove'].includes(action)) {
+        jsonResponse(res, 400, { ok: false, error: 'Missing or invalid "action". Must be "add" or "remove".' });
+        return;
+      }
+      if (!provider || !model) {
+        jsonResponse(res, 400, { ok: false, error: 'Missing "provider" or "model" field.' });
+        return;
+      }
+
+      let favorites = [];
+      if (fs.existsSync(FAVORITES_PATH)) {
+        try {
+          const data = JSON.parse(fs.readFileSync(FAVORITES_PATH, 'utf8'));
+          favorites = data.favorites || [];
+        } catch { /* corrupt file — start fresh */ }
+      }
+
+      if (action === 'add') {
+        const exists = favorites.some(f => f.provider === provider && f.model === model);
+        if (!exists) {
+          favorites.push({ provider, model });
+        }
+      } else {
+        favorites = favorites.filter(f => !(f.provider === provider && f.model === model));
+      }
+
+      const tmpPath = FAVORITES_PATH + '.tmp';
+      fs.writeFileSync(tmpPath, JSON.stringify({ favorites }, null, 2), 'utf8');
+      fs.renameSync(tmpPath, FAVORITES_PATH);
+      jsonResponse(res, 200, { ok: true, favorites });
+    } catch (e) {
+      jsonResponse(res, 500, { ok: false, error: `Failed to save favorites: ${e.message}` });
+    }
+    return;
+  }
+
+  // ---- OpenCode Config Page ----
+  if (pathname === '/opencode-config' && req.method === 'GET') {
+    try {
+      const html = fs.readFileSync(path.join(__dirname, 'opencode-config.html'), 'utf8');
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      res.setHeader('Content-Security-Policy',
+        "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://fonts.gstatic.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'");
+      res.writeHead(200);
+      res.end(html);
+    } catch (e) {
+      res.writeHead(500);
+      res.end('Config page not found');
+    }
+    return;
+  }
+
   // ---- Dashboard ----
   // Serve dashboard at /dash, or at / when no target is set
   if ((pathname === '/dash' || pathname === '/') && req.method === 'GET') {
@@ -1996,6 +2170,109 @@ function rewriteHtmlBody(html, targetHost, targetPort, publicOrigin) {
   const bareHost = new RegExp(`https?://${escapeRegex(targetHost)}(?=/|"|'|\\s|>)`, 'gi');
   rewritten = rewritten.replace(bareHost, publicOrigin);
   return rewritten;
+}
+
+// ---- OpenCode Config Helpers ----
+function parseModelsNdjson(stdout) {
+  const models = [];
+  const lines = stdout.split('\n');
+  let i = 0;
+  while (i < lines.length) {
+    let line = lines[i].trim();
+    if (!line) { i++; continue; }
+    if (!line.startsWith('{') && !line.startsWith('}') && !line.startsWith('[') && !line.startsWith('"')) {
+      const idLine = line;
+      i++;
+      let jsonStr = '';
+      while (i < lines.length) {
+        const nextLine = lines[i];
+        const trimmed = nextLine.trim();
+        if (trimmed && !trimmed.startsWith('{') && !trimmed.startsWith('}') &&
+            !trimmed.startsWith('[') && !trimmed.startsWith('"') && !trimmed.startsWith(',')) {
+          break;
+        }
+        jsonStr += (jsonStr ? '\n' : '') + nextLine;
+        i++;
+        try {
+          const meta = JSON.parse(jsonStr);
+          models.push({
+            id: meta.id || '',
+            provider: meta.providerID || '',
+            name: meta.name || idLine,
+            capabilities: meta.capabilities || {},
+            cost: meta.cost || {},
+            limit: meta.limit || {}
+          });
+          break;
+        } catch { /* keep accumulating */ }
+      }
+    } else {
+      i++;
+    }
+  }
+  return models;
+}
+
+function parseModelId(modelStr) {
+  if (!modelStr || typeof modelStr !== 'string') return { provider: '', modelId: '' };
+  const idx = modelStr.indexOf('/');
+  if (idx === -1) return { provider: '', modelId: modelStr };
+  return {
+    provider: modelStr.substring(0, idx),
+    modelId: modelStr.substring(idx + 1)
+  };
+}
+
+function readSubagentConfig(configPath) {
+  const raw = fs.readFileSync(configPath, 'utf8');
+  const config = JSON.parse(raw);
+  const agents = {};
+  if (config.agent) {
+    for (const [name, entry] of Object.entries(config.agent)) {
+      if (entry.mode === 'subagent' && entry.model) {
+        const parsed = parseModelId(entry.model);
+        agents[name] = {
+          model: entry.model,
+          provider: parsed.provider,
+          modelId: parsed.modelId
+        };
+      }
+    }
+  }
+  return agents;
+}
+
+function patchAgentModels(configPath, updates) {
+  const raw = fs.readFileSync(configPath, 'utf8');
+  const config = JSON.parse(raw);
+  if (!config.agent) config.agent = {};
+
+  for (const [name, model] of Object.entries(updates)) {
+    if (!config.agent[name]) {
+      throw new Error(`Unknown agent: ${name}`);
+    }
+    config.agent[name].model = model;
+  }
+
+  const tmpPath = configPath + '.tmp';
+  fs.writeFileSync(tmpPath, JSON.stringify(config, null, 2), 'utf8');
+  fs.renameSync(tmpPath, configPath);
+}
+
+function deriveProviders(models, providerConfig) {
+  const seen = new Set();
+  const providers = [];
+  for (const m of models) {
+    if (!m.provider || seen.has(m.provider)) continue;
+    seen.add(m.provider);
+    const pc = (providerConfig && providerConfig[m.provider]) || {};
+    providers.push({
+      id: m.provider,
+      name: pc.name || m.provider,
+      baseURL: (pc.options && pc.options.baseURL) || ''
+    });
+  }
+  return providers;
 }
 
 function escapeRegex(str) {

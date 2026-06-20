@@ -578,6 +578,16 @@
     <div id="ngrok-error" class="ngrok-error-msg"></div>
   </div>
 
+  <!-- OpenCode Config card (static, always first, OUTSIDE server grid) -->
+  <div class="server-card config-card" id="opencode-card" style="margin-bottom: 1.5rem;">
+    <div class="server-name-row">
+      <span class="server-icon">&#9881;</span>
+      <span class="server-name">OpenCode Config</span>
+    </div>
+    <div class="server-status" id="opencode-subagent-count">Loading...</div>
+    <a href="/opencode-config" class="server-action-link">Configure &rarr;</a>
+  </div>
+
   <div id="server-list" class="server-grid"></div>
 
   <div id="scheduler-section" class="scheduler-card" style="display:none">
@@ -1031,6 +1041,27 @@ function handleSignOut() {
     .then(() => { window.location.href = '/auth/login'; })
     .catch(() => { window.location.href = '/auth/login'; });
 }
+
+async function updateOpenCodeCard() {
+  try {
+    const resp = await fetch('/api/opencode/config', { headers: { 'Accept': 'application/json' } });
+    if (resp.status === 401) { return; }
+    const data = await resp.json();
+    const el = document.getElementById('opencode-subagent-count');
+    if (data.ok && data.agents) {
+      const count = Object.keys(data.agents).length;
+      el.textContent = count === 0
+        ? 'No subagents configured'
+        : count + ' subagent' + (count !== 1 ? 's' : '') + ' configured';
+    } else {
+      el.textContent = 'Unable to load';
+    }
+  } catch {
+    const el = document.getElementById('opencode-subagent-count');
+    if (el) el.textContent = 'Unable to load';
+  }
+}
+updateOpenCodeCard();
 </script>
 </body>
 </html>

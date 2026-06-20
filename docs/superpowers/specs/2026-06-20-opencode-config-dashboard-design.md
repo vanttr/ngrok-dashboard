@@ -45,15 +45,13 @@ Zero-framework approach continues. All built on Node.js built-ins:
 |---|---|
 | `server.js` | +6 new API routes, +1 page route, NDJSON parser, opencode.json reader/writer |
 | `opencode-config.html` | New subpage — glassmorphism style matching `login.html` |
-| `opencode-dash-config.json` | Favorites store (gitignored) |
+| `opencode-dash-config.json` | Favorites store (add to `.gitignore`) |
 | `tests/opencode-config.test.js` | Unit tests: NDJSON parser, config patching |
 | `tests/opencode-config-integration.test.js` | Integration: server spawn, HTTP tests |
 
 ### Model discovery
 
-```
-opencode models --verbose 2>$null
-```
+Invoked via `child_process.spawn('opencode', ['models', '--verbose'], { stdio: ['ignore', 'pipe', 'ignore'] })`.
 
 Output is NDJSON: alternating model ID line + JSON metadata block.
 Parsed server-side on each `/api/opencode/models` request (~500ms).
@@ -63,6 +61,10 @@ Providers derived from `providerID` field in model metadata.
 
 Read `~/.config/opencode/opencode.json`. Filter agents with `"mode": "subagent"`.
 Return `{ agentName: { model: "provider/id", provider: "provider", modelId: "id" } }`.
+
+**Compound model ID parsing:** Split on the first `/` only. Everything before is `provider`;
+everything after (including any further slashes) is `modelId`. Example:
+`"openrouter/xiaomi/mimo-v2.5"` → `provider: "openrouter"`, `modelId: "xiaomi/mimo-v2.5"`.
 
 ### Config writing
 
@@ -96,6 +98,29 @@ All under auth gate (except page route which redirects to login).
 | `/api/opencode/config` | POST | Patch and write opencode.json |
 | `/api/opencode/favorites` | GET | Read favorites file |
 | `/api/opencode/favorites` | POST | Update favorites (add/remove) |
+
+### Request bodies
+
+**POST `/api/opencode/config`:**
+```json
+{
+  "agents": {
+    "reviewer": "opencode-go/qwen3.6-plus",
+    "mini": "openrouter/xiaomi/mimo-v2.5",
+    "worker": "opencode-go/deepseek-v4-flash"
+  }
+}
+```
+All subagent names must be present. The server rejects unknown agent names with 400.
+
+**POST `/api/opencode/favorites`:**
+```json
+{ "action": "add", "provider": "openrouter", "model": "xiaomi/mimo-v2.5" }
+```
+```json
+{ "action": "remove", "provider": "openrouter", "model": "xiaomi/mimo-v2.5" }
+```
+`action` must be `"add"` or `"remove"`. Missing or invalid fields → 400.
 
 ### Response schemas
 
@@ -258,7 +283,7 @@ functions. Integration tests spawn server with `NO_NGROK=1` on ephemeral port.
 
 - **Auth:** All `/api/opencode/*` routes gated behind existing auth middleware
 - **Security headers:** Inherited from global headers (X-Content-Type-Options, X-Frame-Options, HSTS). Subpage gets same CSP as dashboard
-- **Performance:** Model fetch ~500ms (CLI spawn). Subsequent loads can cache in session
+- **Performance:** Model fetch ~500ms (CLI spawn). No server-side caching — each request re-spawns the CLI. The UI may cache the response in memory for the session lifetime (page reload always re-fetches)
 - **Filesystem safety:** Config writes use atomic write pattern (write to temp → rename)
 - **No new npm dependencies**
 
@@ -272,3 +297,5 @@ functions. Integration tests spawn server with `NO_NGROK=1` on ephemeral port.
 4. **Config patching, not rewriting:** On save, we read the current file, modify only `agent.<name>.model`, and write back. All other config (non-agent keys, agent descriptions, prompts, modes) preserved untouched
 5. **Subpage, not inline:** OpenCode config gets its own HTML page (`opencode-config.html`) rather than being crammed into index.html. Matches the `login.html` precedent and keeps concerns separate
 6. **Tested in isolation first:** Backend routes and subpage tested independently before integration into main dashboard. Enables parallel testing without disrupting running dashboard
+7. **First-slash model ID split:** Model values like `openrouter/xiaomi/mimo-v2.5` are split on the first `/` only — `provider` is everything before, `modelId` is everything after. Consistent with how opencode formats compound vendor model paths under a single provider prefix
+8. **No server-side model caching:** The CLI spawn is fast enough (~500ms) that caching adds complexity for minimal gain. If performance becomes an issue, the server layer can add an in-process TTL cache without changing the API contract

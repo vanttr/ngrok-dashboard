@@ -178,7 +178,10 @@ function parseModelsNdjson(stdout) {
       }
       // If we exhausted lines without parsing JSON, add model from ID line only
       if (i >= lines.length && !jsonStr) {
-        // No JSON block for this model — add with minimal data
+        const slashIdx = idLine.indexOf('/');
+        const prov = slashIdx !== -1 ? idLine.substring(0, slashIdx) : '';
+        const mid = slashIdx !== -1 ? idLine.substring(slashIdx + 1) : idLine;
+        models.push({ id: mid, provider: prov, name: idLine, capabilities: {}, cost: {}, limit: {} });
       }
     } else {
       i++;
@@ -226,6 +229,12 @@ function parseModelsNdjson(stdout) {
           });
           break;
         } catch { /* keep accumulating */ }
+      }
+      if (i >= lines.length && !jsonStr) {
+        const slashIdx = idLine.indexOf('/');
+        const prov = slashIdx !== -1 ? idLine.substring(0, slashIdx) : '';
+        const mid = slashIdx !== -1 ? idLine.substring(slashIdx + 1) : idLine;
+        models.push({ id: mid, provider: prov, name: idLine, capabilities: {}, cost: {}, limit: {} });
       }
     } else {
       i++;
@@ -613,7 +622,7 @@ Add in the API routes section of the server handler (after the `/api/scheduler/f
   }
 ```
 
-Note: The `spawn` import is already at the top of `server.js` (line 2: `const { spawn, execFile } = require('child_process');`). The `os` module is already imported (line 7).
+Note: The `spawn` import is already at the top of `server.js` (line 2: `const { spawn, execFile } = require('child_process');`). The `os` module is already imported (line 7). The `jsonResponse` helper is defined at line 187; `readBody` is defined at line 2006 — both are available throughout the handler without any changes.
 
 - [ ] **Step 3: Write integration test for the models endpoint**
 
@@ -741,8 +750,8 @@ describe('GET /api/opencode/models', () => {
   });
 });
 
-describe('GET /api/opencode/config', () => {
-  it('returns 401 without authentication', async () => {
+describe('Auth gate', () => {
+  it('GET /api/opencode/config returns 401 without authentication', async () => {
     const res = await request('GET', '/api/opencode/config',
       { headers: { 'Accept': 'application/json' } });
     assert.ok(res.status === 401 || res.status === 302,
@@ -986,13 +995,9 @@ Add routes in the API section (after the `/api/opencode/config` POST block):
   }
 ```
 
-- [ ] **Step 2: Add .gitignore entry**
+- [x] **Step 2: Add .gitignore entry** *(already done during spec review)*
 
-Add to `.gitignore` (after `auth.json`):
-
-```
-opencode-dash-config.json
-```
+`opencode-dash-config.json` was added to `.gitignore` alongside `auth.json`. No action needed.
 
 - [ ] **Step 3: Add integration tests for favorites**
 
@@ -1307,21 +1312,6 @@ async function init() {
   }
   
   render();
-}
-
-function render() {
-  if (models.length === 0 && providers.length === 0) {
-    // Models loaded but empty — show "no models" message in each expanded subagent
-    // The provider dropdowns will be empty; add a descriptive message
-    const container = document.getElementById('agents-container');
-    const hint = document.createElement('p');
-    hint.className = 'hint';
-    hint.textContent = 'No models discovered. Check your opencode provider configuration or API keys.';
-    hint.style.marginBottom = '1rem';
-    // Will be shown alongside agent rows
-  }
-  renderFavorites();
-  renderAgents();
 }
 
 // ---- Rendering ----
