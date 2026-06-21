@@ -1,51 +1,41 @@
 // server/providers/opencode-go.js
+// OpenCode Go — reads total cost from local OpenCode SQLite DB
+// Shows usage against known limits: 5h=$12, weekly=$30, monthly=$60
 'use strict';
 const { createProviderResult } = require('./provider-result.js');
+const { getGoUsage } = require('./opencode-local-db.js');
 
-// Static Go limits from OpenCode docs (https://opencode.ai/docs/go/)
-const GO_LIMITS = {
-  fiveHour: { usedPercent: 0, resetsAt: null, windowDurationMins: 300 },
-  sevenDay: { usedPercent: 0, resetsAt: null, windowDurationMins: 10080 },
-  monthly: { usedDollars: 0, limitDollars: 60 }
-};
-
-const GO_USAGE_URL = 'https://opencode.ai/zen/go/v1/usage';
-
-async function fetchOpenCodeGoProviderData({ settings, deps = {} } = {}) {
-  const apiKey = settings.opencodeGoApiKey;
-  if (!apiKey) {
-    return createProviderResult({
-      fiveHour: { ...GO_LIMITS.fiveHour },
-      sevenDay: { ...GO_LIMITS.sevenDay }
-    });
-  }
-  const fetchFn = deps.fetchFn || fetch;
+async function fetchOpenCodeGoProviderData({ deps = {} } = {}) {
   try {
-    const response = await fetchFn(GO_USAGE_URL, {
-      headers: { Authorization: `Bearer ${apiKey}` }
-    });
-    if (!response.ok) {
-      throw new Error(`OpenCode Go usage request failed with status ${response.status}.`);
+    const dbModule = require('./opencode-local-db.js');
+    const db = dbModule.openDB();
+    if (!db) {
+      return createProviderResult({
+        error: { message: 'OpenCode DB not found. Run opencode CLI first.' }
+      });
     }
-    const payload = await response.json();
+    const usage = getGoUsage(db);
+    db.close();
+
+    // Show total cost as percentage of each limit cap
+    const total = usage.totalCost;
     return createProviderResult({
       fiveHour: {
-        usedPercent: payload?.fiveHour?.usedPercent ?? GO_LIMITS.fiveHour.usedPercent,
-        resetsAt: payload?.fiveHour?.resetsAt ?? null,
-        windowDurationMins: payload?.fiveHour?.windowDurationMins ?? GO_LIMITS.fiveHour.windowDurationMins
+        usedPercent: Math.round((total / 12) * 100),
+        resetsAt: null,
+        windowDurationMins: 300
       },
       sevenDay: {
-        usedPercent: payload?.sevenDay?.usedPercent ?? GO_LIMITS.sevenDay.usedPercent,
-        resetsAt: payload?.sevenDay?.resetsAt ?? null,
-        windowDurationMins: payload?.sevenDay?.windowDurationMins ?? GO_LIMITS.sevenDay.windowDurationMins
+        usedPercent: Math.round((total / 30) * 100),
+        resetsAt: null,
+        windowDurationMins: 10080
       }
     });
   } catch (err) {
     return createProviderResult({
-      fiveHour: { ...GO_LIMITS.fiveHour },
-      sevenDay: { ...GO_LIMITS.sevenDay }
+      error: { message: `Failed to read OpenCode Go usage: ${err.message}` }
     });
   }
 }
 
-module.exports = { fetchOpenCodeGoProviderData, GO_LIMITS };
+module.exports = { fetchOpenCodeGoProviderData };
