@@ -27,6 +27,47 @@ function resolveOpencodePath() {
   return 'opencode'; // fallback to PATH
 }
 const OPENCODE_PATH = resolveOpencodePath();
+
+// ---- Provider Usage Tracking ----
+const { createProviderRegistry } = require('./server/providers/registry.js');
+const { createRefreshService } = require('./server/jobs/refresh-providers.js');
+const { createProviderCacheRepo } = require('./server/db/provider-cache-repo.js');
+const Database = require('better-sqlite3');
+
+let USAGE_CONFIG;
+try {
+  USAGE_CONFIG = JSON.parse(fs.readFileSync(path.join(__dirname, 'usage.json'), 'utf8'));
+} catch (e) {
+  USAGE_CONFIG = {};
+}
+const USAGE_POLL_MS = Math.max(1, Math.min(60, USAGE_CONFIG.pollIntervalMinutes || 5)) * 60 * 1000;
+
+let refreshService = null;
+function initProviderTracking() {
+  try {
+    const dbDir = path.join(__dirname, '.tmp');
+    if (!fs.existsSync(dbDir)) fs.mkdirSync(dbDir, { recursive: true });
+    const database = new Database(path.join(dbDir, 'provider-cache.sqlite'));
+    const providerCacheRepo = createProviderCacheRepo(database);
+    const registry = createProviderRegistry();
+    const settings = {
+      openrouterApiKey: USAGE_CONFIG.openrouterApiKey || '',
+      deepseekApiKey: USAGE_CONFIG.deepseekApiKey || '',
+      opencodeGoApiKey: USAGE_CONFIG.opencodeGoApiKey || ''
+    };
+    refreshService = createRefreshService({ registry, providerCacheRepo, settings });
+    // Initial fetch (async, non-blocking)
+    refreshService.refreshAll().catch(err => console.error('Provider refresh error:', err.message));
+    // Periodic refresh
+    setInterval(() => {
+      if (refreshService) refreshService.refreshAll().catch(err => console.error('Provider refresh error:', err.message));
+    }, USAGE_POLL_MS);
+    console.log('Provider tracking initialized. Poll interval:', USAGE_POLL_MS / 60000, 'min');
+  } catch (e) {
+    console.error('Failed to initialize provider tracking:', e.message);
+  }
+}
+
 // ---- Authentication Config ----
 let AUTH;
 let AUTH_ACTIVE = false;
@@ -1529,7 +1570,8 @@ const server = http.createServer(async (req, res) => {
     pathname === '/auth/logout';
   const isPublic = pathname === '/ngrok-skip-browser-warning' || isAuthRoute;
 
-  if (AUTH_ACTIVE && !isPublic) {
+  const NO_AUTH = !!process.env.NO_AUTH;
+  if (AUTH_ACTIVE && !isPublic && !NO_AUTH) {
     const session = getSession(req);
     if (!session) {
       // Redirect browser requests to login; API clients get 401
@@ -1896,6 +1938,26 @@ const server = http.createServer(async (req, res) => {
       jsonResponse(res, 500, { ok: false, error: `Failed to save favorites: ${e.message}` });
     }
     return;
+  }
+
+  // ---- Provider API ----
+  if (pathname === '/api/providers' && req.method === 'GET') {
+    if (!refreshService) {
+      return jsonResponse(res, 200, []);
+    }
+    return jsonResponse(res, 200, refreshService.listProviderRows());
+  }
+
+  if (pathname === '/api/providers/refresh' && req.method === 'POST') {
+    if (!refreshService) {
+      return jsonResponse(res, 503, { ok: false, error: 'Provider tracking not initialized.' });
+    }
+    try {
+      await refreshService.refreshAll();
+      return jsonResponse(res, 200, refreshService.listProviderRows());
+    } catch (err) {
+      return jsonResponse(res, 500, { ok: false, error: err.message });
+    }
   }
 
   // ---- OpenCode Config Page ----
@@ -2325,6 +2387,8 @@ async function main() {
     console.error(`Server error: ${err.message}`);
     process.exit(1);
   });
+
+  initProviderTracking();
 
   server.listen(SWITCHER_PORT, SWITCHER_HOST, () => {
     console.log(`Switcher listening on http://${SWITCHER_HOST}:${SWITCHER_PORT}`);
