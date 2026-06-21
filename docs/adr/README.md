@@ -73,3 +73,6 @@ The Options Considered detail is the most-violated part. Each option must have a
 | [0001](0001-reverse-proxy-architecture.md) | Reverse proxy architecture over 3-slot tunnel model | Accepted |
 | [0002](0002-node-builtins-no-framework.md) | Node.js built-in http module over Express | Accepted |
 | [0003](0003-config-plus-port-scan-discovery.md) | Config-file server list with port-range fallback scan | Accepted |
+| [0004](0004-scheduled-prompt-architecture.md) | Scheduled prompt architecture | Accepted |
+| [0005](0005-opencode-config-dashboard.md) | OpenCode config dashboard | Accepted |
+| [0006](0006-usage-limit-cards-architecture.md) | Usage limit cards — vanilla JS port from llm-dashboard | Accepted |
