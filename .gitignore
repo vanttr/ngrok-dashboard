@@ -27,5 +27,8 @@ Thumbs.db
 # Auth secrets (template committed with empty values — local edits are gitignored)
 auth.json
 
+# Provider API keys (template committed with empty values — local edits are gitignored)
+usage.json
+
 # OpenCode config dashboard — local favorites store
 opencode-dash-config.json
