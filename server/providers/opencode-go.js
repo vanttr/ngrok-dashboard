@@ -16,8 +16,7 @@ async function fetchOpenCodeGoProviderData({ settings, deps = {} } = {}) {
   if (!apiKey) {
     return createProviderResult({
       fiveHour: { ...GO_LIMITS.fiveHour },
-      sevenDay: { ...GO_LIMITS.sevenDay },
-      error: { message: 'OpenCode Go API key is not configured. Set it in usage.json. Showing static limits.' }
+      sevenDay: { ...GO_LIMITS.sevenDay }
     });
   }
   const fetchFn = deps.fetchFn || fetch;
@@ -44,8 +43,7 @@ async function fetchOpenCodeGoProviderData({ settings, deps = {} } = {}) {
   } catch (err) {
     return createProviderResult({
       fiveHour: { ...GO_LIMITS.fiveHour },
-      sevenDay: { ...GO_LIMITS.sevenDay },
-      error: { message: `OpenCode Go API unavailable: ${err.message}. Showing static limits.` }
+      sevenDay: { ...GO_LIMITS.sevenDay }
     });
   }
 }

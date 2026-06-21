@@ -868,6 +868,8 @@ function providerStatesEqual(a, b) {
   if (a.fiveHour && b.fiveHour && (a.fiveHour.usedPercent !== b.fiveHour.usedPercent || a.fiveHour.resetsAt !== b.fiveHour.resetsAt)) return false;
   if (!!a.sevenDay !== !!b.sevenDay) return false;
   if (a.sevenDay && b.sevenDay && (a.sevenDay.usedPercent !== b.sevenDay.usedPercent || a.sevenDay.resetsAt !== b.sevenDay.resetsAt)) return false;
+  if (a.balanceUsd !== b.balanceUsd) return false;
+  if (a.balanceAud !== b.balanceAud) return false;
   return true;
 }
 
@@ -906,6 +908,8 @@ function renderProviders(providers) {
       error: p.error?.message || null,
       fiveHour: p.fiveHour,
       sevenDay: p.sevenDay,
+      balanceUsd: p.balanceUsd,
+      balanceAud: p.balanceAud,
       isDanger: maxPct > 80
     };
   }
@@ -959,6 +963,19 @@ function renderProviders(providers) {
         '<div class="limit-bar">' +
           '<div class="limit-bar__fill' + fillClass + '" style="width:' + Math.max(0, Math.min(100, pct)) + '%"></div>' +
         '</div>' +
+      '</div>';
+    }
+
+    // Balance row — shown when no usage windows exist but balance data is available (OpenRouter, DeepSeek)
+    if (!state.fiveHour && !state.sevenDay && (state.balanceUsd !== null && state.balanceUsd !== undefined)) {
+      bodyHTML += '<div class="limit-row">' +
+        '<div class="limit-row__header">' +
+          '<span>Balance</span>' +
+          '<span>$' + Number(state.balanceUsd).toFixed(2) + ' USD</span>' +
+        '</div>' +
+        (state.balanceAud !== null && state.balanceAud !== undefined
+          ? '<div class="limit-row__subtext">A$' + Number(state.balanceAud).toFixed(2) + ' AUD</div>'
+          : '') +
       '</div>';
     }
 
