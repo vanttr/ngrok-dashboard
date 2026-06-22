@@ -28,6 +28,11 @@ function normalizeClaudeUtilization(utilization) {
   return Math.round(utilization);
 }
 
+function computeResetsAt(apiResetsAt, windowDurationMins) {
+  if (apiResetsAt) return apiResetsAt;
+  return new Date(Date.now() + windowDurationMins * 60 * 1000).toISOString();
+}
+
 async function fetchClaudeCodeProviderData({ deps = {} } = {}) {
   const credentialsPath = deps.credentialsPath || getClaudeCredentialsPath(deps.homeDir || os.homedir(), deps.platform || process.platform);
   let credentials = readCredentials(credentialsPath, deps.readFileFn);
@@ -54,12 +59,12 @@ async function fetchClaudeCodeProviderData({ deps = {} } = {}) {
   return createProviderResult({
     fiveHour: {
       usedPercent: normalizeClaudeUtilization(payload?.five_hour?.utilization),
-      resetsAt: payload?.five_hour?.resets_at ?? null,
+      resetsAt: computeResetsAt(payload?.five_hour?.resets_at, 300),
       windowDurationMins: 300
     },
     sevenDay: {
       usedPercent: normalizeClaudeUtilization(payload?.seven_day?.utilization),
-      resetsAt: payload?.seven_day?.resets_at ?? null,
+      resetsAt: computeResetsAt(payload?.seven_day?.resets_at, 10080),
       windowDurationMins: 10080
     }
   });
