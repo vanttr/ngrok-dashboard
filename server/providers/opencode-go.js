@@ -13,12 +13,12 @@ async function fetchOpenCodeGoProviderData() {
       return createProviderResult({
         fiveHour: {
           usedPercent: usage.fiveHour ?? 0,
-          resetsAt: null,
+          resetsAt: usage.fiveHourResetsAt ?? null,
           windowDurationMins: 300
         },
         sevenDay: {
           usedPercent: usage.sevenDay ?? 0,
-          resetsAt: null,
+          resetsAt: usage.sevenDayResetsAt ?? null,
           windowDurationMins: 10080
         }
       });

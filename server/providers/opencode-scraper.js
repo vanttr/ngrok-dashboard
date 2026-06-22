@@ -52,6 +52,24 @@ async function getContext() {
   return _context;
 }
 
+function parseResetTime(text) {
+  // "Resets in 5 hours 0 minutes" or "Resets in 6 days 21 hours"
+  if (!text) return null;
+  const now = Date.now();
+  
+  const daysHoursMatch = text.match(/Resets in (\d+) days? (\d+) hours?/);
+  const hoursMinsMatch = text.match(/Resets in (\d+) hours? (\d+) minutes?/);
+  
+  let ms = 0;
+  if (daysHoursMatch) {
+    ms = parseInt(daysHoursMatch[1]) * 86400000 + parseInt(daysHoursMatch[2]) * 3600000;
+  } else if (hoursMinsMatch) {
+    ms = parseInt(hoursMinsMatch[1]) * 3600000 + parseInt(hoursMinsMatch[2]) * 60000;
+  }
+  
+  return ms > 0 ? new Date(now + ms).toISOString() : null;
+}
+
 async function scrapeGoUsage() {
   const context = await getContext();
   const page = await context.newPage();
@@ -66,9 +84,15 @@ async function scrapeGoUsage() {
     const rollingMatch = text.match(/Rolling Usage\s+(\d+)%/);
     const weeklyMatch = text.match(/Weekly Usage\s+(\d+)%/);
     
+    // Extract reset times
+    const rollingSection = text.match(/Rolling Usage[\s\S]*?(?=Weekly Usage|Monthly Usage|$)/);
+    const weeklySection = text.match(/Weekly Usage[\s\S]*?(?=Monthly Usage|$)/);
+    
     return {
       fiveHour: rollingMatch ? parseInt(rollingMatch[1]) : null,
+      fiveHourResetsAt: rollingSection ? parseResetTime(rollingSection[0]) : null,
       sevenDay: weeklyMatch ? parseInt(weeklyMatch[1]) : null,
+      sevenDayResetsAt: weeklySection ? parseResetTime(weeklySection[0]) : null,
     };
   } finally {
     await page.close();
