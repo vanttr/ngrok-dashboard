@@ -106,17 +106,17 @@ describe('buildProviderApiRow', () => {
 });
 
 describe('createProviderRegistry', () => {
-  it('returns 6 providers (5 visible + 1 internal)', () => {
+  it('returns 7 providers (6 visible + 1 internal)', () => {
     const registry = createProviderRegistry();
-    assert.strictEqual(registry.length, 6);
+    assert.strictEqual(registry.length, 7);
   });
 
   it('visible providers have exposeInProvidersApi=true', () => {
     const registry = createProviderRegistry();
     const visible = registry.filter(p => p.exposeInProvidersApi);
-    assert.strictEqual(visible.length, 5);
+    assert.strictEqual(visible.length, 6);
     const ids = visible.map(p => p.providerId);
-    assert.deepStrictEqual(ids.sort(), ['claude_code', 'codex', 'deepseek', 'opencode_go', 'openrouter'].sort());
+    assert.deepStrictEqual(ids.sort(), ['claude_code', 'codex', 'deepseek', 'opencode_go', 'opencode_zen', 'openrouter'].sort());
   });
 
   it('exchange_rates is not exposed in API', () => {
@@ -134,11 +134,10 @@ describe('createProviderRegistry', () => {
 });
 
 describe('opencode-go static limits', () => {
-  it('exports GO_LIMITS', () => {
-    const { GO_LIMITS } = require('../server/providers/opencode-go.js');
-    assert.ok(GO_LIMITS);
-    assert.strictEqual(GO_LIMITS.fiveHour.windowDurationMins, 300);
-    assert.strictEqual(GO_LIMITS.sevenDay.windowDurationMins, 10080);
-    assert.strictEqual(GO_LIMITS.monthly.limitDollars, 60);
+  it('exports Go limit constants from opencode-local-db', () => {
+    const { GO_5H_LIMIT, GO_WEEKLY_LIMIT, GO_MONTHLY_LIMIT } = require('../server/providers/opencode-local-db.js');
+    assert.strictEqual(GO_5H_LIMIT, 12);
+    assert.strictEqual(GO_WEEKLY_LIMIT, 30);
+    assert.strictEqual(GO_MONTHLY_LIMIT, 60);
   });
 });
