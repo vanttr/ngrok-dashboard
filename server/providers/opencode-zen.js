@@ -1,11 +1,10 @@
 // server/providers/opencode-zen.js
-// OpenCode Zen — prefers zenBalanceUsd from settings, falls back to local DB
+// OpenCode Zen — scrapes live balance, falls back to config then local DB
 'use strict';
 const { createProviderResult } = require('./provider-result.js');
-const { getZenUsage } = require('./opencode-local-db.js');
 
-async function fetchOpenCodeZenProviderData({ settings, deps = {} } = {}) {
-  // Prefer manually configured balance from usage.json
+async function fetchOpenCodeZenProviderData({ settings } = {}) {
+  // 1. Config override (fastest)
   if (settings && settings.zenBalanceUsd !== undefined && settings.zenBalanceUsd !== null && settings.zenBalanceUsd !== '') {
     const balance = Number(settings.zenBalanceUsd);
     if (Number.isFinite(balance)) {
@@ -13,22 +12,31 @@ async function fetchOpenCodeZenProviderData({ settings, deps = {} } = {}) {
     }
   }
 
-  // Fall back to local OpenCode DB
+  // 2. Scrape live balance
   try {
-    const db = deps.openDB ? deps.openDB() : require('./opencode-local-db.js').openDB();
-    if (!db) {
-      return createProviderResult({
-        error: { message: 'OpenCode DB not found. Run opencode CLI first.' }
-      });
+    const { scrapeZenBalance } = require('./opencode-scraper.js');
+    const balance = await scrapeZenBalance();
+    if (balance !== null && Number.isFinite(balance)) {
+      return createProviderResult({ balanceUsd: balance });
     }
-    const usage = getZenUsage(db);
-    db.close();
-    return createProviderResult({ balanceUsd: usage.totalCost });
   } catch (err) {
-    return createProviderResult({
-      error: { message: `Failed to read Zen usage: ${err.message}` }
-    });
+    console.error('Zen scraper error:', err.message);
   }
+
+  // 3. Fall back to local DB
+  try {
+    const dbModule = require('./opencode-local-db.js');
+    const db = dbModule.openDB();
+    if (db) {
+      const usage = dbModule.getZenUsage(db);
+      db.close();
+      return createProviderResult({ balanceUsd: usage.totalCost });
+    }
+  } catch {}
+
+  return createProviderResult({
+    error: { message: 'Zen balance unavailable.' }
+  });
 }
 
 module.exports = { fetchOpenCodeZenProviderData };
