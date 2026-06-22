@@ -986,7 +986,7 @@ function renderProviders(providers) {
       '</div>' +
       '<div class="provider-card__body">' +
         bodyHTML +
-        (state.error ? '<div class="provider-card__error">' + esc(state.error) + '</div>' : '') +
+        (state.error ? '<div class="provider-card__error">' + esc(friendlyError(state.error)) + '</div>' : '') +
       '</div>';
 
     if (!existing) {
@@ -1319,6 +1319,14 @@ function formatResetAt(resetsAt) {
 function formatPercentage(value) {
   if (value === null || value === undefined) return 'N/A';
   return `${value}%`;
+}
+
+function friendlyError(msg) {
+  if (!msg) return '';
+  if (msg.includes('Codex')) return 'Usage not found';
+  if (msg.includes('API key is not configured')) return 'Not configured';
+  if (msg.includes('DB not found')) return 'No usage data yet';
+  return msg;
 }
 
 function formatUptime(seconds) {
