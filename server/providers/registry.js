@@ -10,7 +10,7 @@ const { fetchExchangeRateProviderData } = require('./exchange-rates.js');
 
 function createProviderRegistry(overrides = {}) {
   const defaultProviders = [
-    { providerId: 'claude_code', displayName: 'Claude Code', exposeInProvidersApi: true, fetchProviderData: fetchClaudeCodeProviderData },
+    { providerId: 'claude_code', displayName: 'Claude Code', exposeInProvidersApi: false, fetchProviderData: fetchClaudeCodeProviderData },
     { providerId: 'codex', displayName: 'Codex', exposeInProvidersApi: true, fetchProviderData: fetchCodexProviderData },
     { providerId: 'openrouter', displayName: 'OpenRouter', exposeInProvidersApi: true, fetchProviderData: fetchOpenRouterProviderData },
     { providerId: 'deepseek', displayName: 'DeepSeek', exposeInProvidersApi: true, fetchProviderData: fetchDeepSeekProviderData },

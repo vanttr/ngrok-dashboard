@@ -114,9 +114,9 @@ describe('createProviderRegistry', () => {
   it('visible providers have exposeInProvidersApi=true', () => {
     const registry = createProviderRegistry();
     const visible = registry.filter(p => p.exposeInProvidersApi);
-    assert.strictEqual(visible.length, 6);
+    assert.strictEqual(visible.length, 5);
     const ids = visible.map(p => p.providerId);
-    assert.deepStrictEqual(ids.sort(), ['claude_code', 'codex', 'deepseek', 'opencode_go', 'opencode_zen', 'openrouter'].sort());
+    assert.deepStrictEqual(ids.sort(), ['codex', 'deepseek', 'opencode_go', 'opencode_zen', 'openrouter'].sort());
   });
 
   it('exchange_rates is not exposed in API', () => {
