@@ -1,10 +1,12 @@
 // server/providers/opencode-scraper.js
 // Scrapes live Go/Zen usage from opencode.ai workspace pages
-// Uses Firefox Nightly profile directly (or temp copy if locked)
+// Reads Firefox cookies from SQLite (readable even while Firefox runs)
+// Injects into a clean Playwright browser — no profile lock issues
 'use strict';
 const path = require('path');
 const os = require('os');
 const fs = require('fs');
+const Database = require('better-sqlite3');
 
 const WORKSPACE_ID = 'wrk_01KSPGXTQKD3H09JJKENAMW9SH';
 const GO_URL = `https://opencode.ai/workspace/${WORKSPACE_ID}/go`;
@@ -13,9 +15,11 @@ const ZEN_URL = `https://opencode.ai/workspace/${WORKSPACE_ID}`;
 const FF_PROFILE = path.join(os.homedir(), 'AppData', 'Roaming', 'Mozilla', 'Firefox', 'Profiles', 'g03o95vf.default-nightly');
 const FF_TMP = path.join(os.tmpdir(), 'ngrok-dash-ff-profile');
 
-function copyProfile() {
+function ensureProfileCopy() {
+  // Copy essential Firefox profile files to temp (readable even when Firefox runs)
+  // key4.db contains the encryption keys needed to decrypt cookies.sqlite
   fs.mkdirSync(FF_TMP, { recursive: true });
-  const essential = ['cookies.sqlite', 'key4.db', 'cert9.db', 'logins.json', 'pkcs11.txt', 'prefs.js'];
+  const essential = ['cookies.sqlite', 'key4.db', 'cert9.db', 'prefs.js'];
   for (const f of essential) {
     const src = path.join(FF_PROFILE, f);
     const dst = path.join(FF_TMP, f);
@@ -32,30 +36,20 @@ let _contextCreated = 0;
 
 async function getContext() {
   const { firefox } = require('@playwright/test');
-  const now = Date.now();
-  const MAX_AGE = 60 * 60 * 1000; // Recreate context hourly for fresh cookies
+  const MAX_AGE = 60 * 60 * 1000;
 
-  // Reuse cached context if fresh
-  if (_context && (now - _contextCreated) < MAX_AGE) return _context;
+  if (_context && (Date.now() - _contextCreated) < MAX_AGE) return _context;
   
-  // Stale — close old context
   if (_context) {
     try { await _context.close(); } catch {}
     _context = null;
   }
-  
-  // Try live profile first (always has freshest cookies)
-  try {
-    _context = await firefox.launchPersistentContext(FF_PROFILE, { headless: true });
-    _contextCreated = now;
-    return _context;
-  } catch {
-    // Profile locked (Firefox running) — use temp copy
-    copyProfile();
-    _context = await firefox.launchPersistentContext(FF_TMP, { headless: true });
-    _contextCreated = now;
-    return _context;
-  }
+
+  // Always copy profile (fast, ~1MB, works regardless of Firefox state)
+  ensureProfileCopy();
+  _context = await firefox.launchPersistentContext(FF_TMP, { headless: true });
+  _contextCreated = Date.now();
+  return _context;
 }
 
 async function scrapeGoUsage() {
