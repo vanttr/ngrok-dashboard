@@ -2,5 +2,6 @@
   "pollIntervalMinutes": 5,
   "openrouterApiKey": "",
   "deepseekApiKey": "",
-  "opencodeGoApiKey": ""
+  "opencodeGoApiKey": "",
+  "zenBalanceUsd": null
 }

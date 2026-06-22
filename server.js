@@ -53,7 +53,8 @@ function initProviderTracking() {
     const settings = {
       openrouterApiKey: USAGE_CONFIG.openrouterApiKey || '',
       deepseekApiKey: USAGE_CONFIG.deepseekApiKey || '',
-      opencodeGoApiKey: USAGE_CONFIG.opencodeGoApiKey || ''
+      opencodeGoApiKey: USAGE_CONFIG.opencodeGoApiKey || '',
+      zenBalanceUsd: USAGE_CONFIG.zenBalanceUsd
     };
     refreshService = createRefreshService({ registry, providerCacheRepo, settings });
     // Initial fetch (async, non-blocking)
