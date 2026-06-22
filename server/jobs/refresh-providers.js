@@ -22,6 +22,7 @@ function buildProviderApiRow(provider, cacheRow, now = Date.now()) {
     status: getProviderStatus({ fetchedAt: cacheRow?.fetchedAt ?? null, error: payload.error, now }),
     fiveHour: payload.fiveHour ?? null,
     sevenDay: payload.sevenDay ?? null,
+    monthly: payload.monthly ?? null,
     balanceUsd: payload.balanceUsd ?? null,
     balanceAud: payload.balanceAud ?? null,
     error: payload.error ?? null,

@@ -10,10 +10,11 @@ function normalizeWindow(window) {
   };
 }
 
-function createProviderResult({ fiveHour = null, sevenDay = null, balanceUsd = null, balanceAud = null, error = null } = {}) {
+function createProviderResult({ fiveHour = null, sevenDay = null, monthly = null, balanceUsd = null, balanceAud = null, error = null } = {}) {
   return {
     fiveHour: normalizeWindow(fiveHour),
     sevenDay: normalizeWindow(sevenDay),
+    monthly: normalizeWindow(monthly),
     balanceUsd,
     balanceAud,
     error

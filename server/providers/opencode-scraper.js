@@ -83,16 +83,19 @@ async function scrapeGoUsage() {
     const text = await page.evaluate(() => document.body.innerText);
     const rollingMatch = text.match(/Rolling Usage\s+(\d+)%/);
     const weeklyMatch = text.match(/Weekly Usage\s+(\d+)%/);
+    const monthlyMatch = text.match(/Monthly Usage\s+(\d+)%/);
     
-    // Extract reset times
     const rollingSection = text.match(/Rolling Usage[\s\S]*?(?=Weekly Usage|Monthly Usage|$)/);
     const weeklySection = text.match(/Weekly Usage[\s\S]*?(?=Monthly Usage|$)/);
+    const monthlySection = text.match(/Monthly Usage[\s\S]*?(?=Use your|Invite|$)/);
     
     return {
       fiveHour: rollingMatch ? parseInt(rollingMatch[1]) : null,
       fiveHourResetsAt: rollingSection ? parseResetTime(rollingSection[0]) : null,
       sevenDay: weeklyMatch ? parseInt(weeklyMatch[1]) : null,
       sevenDayResetsAt: weeklySection ? parseResetTime(weeklySection[0]) : null,
+      monthlyPct: monthlyMatch ? parseInt(monthlyMatch[1]) : null,
+      monthlyResetsAt: monthlySection ? parseResetTime(monthlySection[0]) : null,
     };
   } finally {
     await page.close();

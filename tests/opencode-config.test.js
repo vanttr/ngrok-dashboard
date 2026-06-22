@@ -102,9 +102,20 @@ describe('parseModelsNdjson', () => {
   "providerID": "anthropic",
   "name": "Claude Sonnet 4",
   "capabilities": {
-    "tools": true,
-    "vision": true,
-    "promptCaching": true
+    "temperature": true,
+    "toolcall": true,
+    "input": {
+      "text": true,
+      "image": true,
+      "video": false,
+      "audio": false,
+      "pdf": false
+    },
+    "output": {
+      "text": true,
+      "image": false
+    },
+    "interleaved": false
   },
   "cost": {
     "input": 3,
@@ -120,7 +131,8 @@ describe('parseModelsNdjson', () => {
     assert.equal(result[0].id, 'anthropic/claude-sonnet-4-20250514');
     assert.equal(result[0].provider, 'anthropic');
     assert.equal(result[0].name, 'Claude Sonnet 4');
-    assert.deepEqual(result[0].capabilities.tools, true);
+    assert.deepEqual(result[0].capabilities.toolcall, true);
+    assert.deepEqual(result[0].capabilities.input.image, true);
     assert.deepEqual(result[0].cost, { input: 3, output: 15, currency: 'USD' });
     assert.deepEqual(result[0].limit, { maxTokens: 8192 });
   });
@@ -181,9 +193,19 @@ anthropic/claude-sonnet-4-20250514
   "providerID": "openrouter",
   "name": "Claude 3.5 Sonnet (OpenRouter)",
   "capabilities": {
-    "tools": true,
-    "vision": false,
-    "promptCaching": false
+    "temperature": true,
+    "toolcall": true,
+    "input": {
+      "text": true,
+      "image": false,
+      "video": false,
+      "audio": false,
+      "pdf": false
+    },
+    "output": {
+      "text": true,
+      "image": false
+    }
   },
   "cost": {
     "input": 3,
@@ -195,7 +217,7 @@ anthropic/claude-sonnet-4-20250514
     assert.equal(result.length, 1);
     assert.equal(result[0].id, 'openrouter/anthropic/claude-3.5-sonnet');
     assert.equal(result[0].provider, 'openrouter');
-    assert.equal(result[0].capabilities.tools, true);
+    assert.equal(result[0].capabilities.toolcall, true);
     assert.equal(result[0].cost.input, 3);
   });
 });

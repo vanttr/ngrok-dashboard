@@ -20,7 +20,12 @@ async function fetchOpenCodeGoProviderData() {
           usedPercent: usage.sevenDay ?? 0,
           resetsAt: usage.sevenDayResetsAt ?? null,
           windowDurationMins: 10080
-        }
+        },
+        monthly: usage.monthlyPct !== null ? {
+          usedPercent: usage.monthlyPct,
+          resetsAt: usage.monthlyResetsAt ?? null,
+          windowDurationMins: 43200
+        } : null
       });
     }
   } catch (err) {

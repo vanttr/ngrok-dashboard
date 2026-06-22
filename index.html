@@ -868,6 +868,8 @@ function providerStatesEqual(a, b) {
   if (a.fiveHour && b.fiveHour && (a.fiveHour.usedPercent !== b.fiveHour.usedPercent || a.fiveHour.resetsAt !== b.fiveHour.resetsAt)) return false;
   if (!!a.sevenDay !== !!b.sevenDay) return false;
   if (a.sevenDay && b.sevenDay && (a.sevenDay.usedPercent !== b.sevenDay.usedPercent || a.sevenDay.resetsAt !== b.sevenDay.resetsAt)) return false;
+  if (!!a.monthly !== !!b.monthly) return false;
+  if (a.monthly && b.monthly && (a.monthly.usedPercent !== b.monthly.usedPercent || a.monthly.resetsAt !== b.monthly.resetsAt)) return false;
   if (a.balanceUsd !== b.balanceUsd) return false;
   if (a.balanceAud !== b.balanceAud) return false;
   return true;
@@ -901,13 +903,15 @@ function renderProviders(providers) {
   for (const p of providers) {
     const fivePct = p.fiveHour?.usedPercent ?? null;
     const sevenPct = p.sevenDay?.usedPercent ?? null;
-    const maxPct = Math.max(fivePct ?? 0, sevenPct ?? 0);
+    const monthlyPct = p.monthly?.usedPercent ?? null;
+    const maxPct = Math.max(fivePct ?? 0, sevenPct ?? 0, monthlyPct ?? 0);
     newStateMap[p.providerId] = {
       displayName: p.displayName,
       status: p.status,
       error: p.error?.message || null,
       fiveHour: p.fiveHour,
       sevenDay: p.sevenDay,
+      monthly: p.monthly,
       balanceUsd: p.balanceUsd,
       balanceAud: p.balanceAud,
       isDanger: maxPct > 80
@@ -960,6 +964,22 @@ function renderProviders(providers) {
           '<span>' + formatPercentage(state.sevenDay.usedPercent) + ' used \u00b7 resets in ' + formatCountdown(state.sevenDay.resetsAt) + '</span>' +
         '</div>' +
         '<div class="limit-row__subtext">Reset at ' + formatResetAt(state.sevenDay.resetsAt) + '</div>' +
+        '<div class="limit-bar">' +
+          '<div class="limit-bar__fill' + fillClass + '" style="width:' + Math.max(0, Math.min(100, pct)) + '%"></div>' +
+        '</div>' +
+      '</div>';
+    }
+
+    // Monthly limit row (OpenCode Go only)
+    if (state.monthly) {
+      const pct = state.monthly.usedPercent ?? 0;
+      const fillClass = pct > 80 ? ' limit-bar__fill--danger' : '';
+      bodyHTML += '<div class="limit-row">' +
+        '<div class="limit-row__header">' +
+          '<span>Monthly</span>' +
+          '<span>' + formatPercentage(state.monthly.usedPercent) + ' used \u00b7 resets in ' + formatCountdown(state.monthly.resetsAt) + '</span>' +
+        '</div>' +
+        '<div class="limit-row__subtext">Reset at ' + formatResetAt(state.monthly.resetsAt) + '</div>' +
         '<div class="limit-bar">' +
           '<div class="limit-bar__fill' + fillClass + '" style="width:' + Math.max(0, Math.min(100, pct)) + '%"></div>' +
         '</div>' +
