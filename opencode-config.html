@@ -34,8 +34,11 @@
   .favorites-row { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 0.5rem; }
   .fav-chip { display: flex; align-items: center; gap: 0.4rem; background: var(--surface-glass); border: 1px solid var(--border); border-radius: var(--radius-pill); padding: 0.4rem 0.8rem; font-size: var(--text-xs); cursor: pointer; user-select: none; transition: background 0.15s; }
   .fav-chip:hover { background: var(--surface); border-color: var(--accent); }
+  .fav-chip--inherit { background: rgba(70,106,90,0.06); border-color: var(--accent); border-style: dashed; }
+  .fav-chip--inherit:hover { background: rgba(70,106,90,0.12); }
   .fav-provider { color: var(--ink-soft); }
   .fav-model { color: var(--ink-strong); font-weight: 500; }
+  .inherit-icon { color: var(--accent); font-size: 0.9rem; font-weight: 600; }
   .star { font-size: 0.9rem; cursor: pointer; }
   .star.filled { color: #d4a017; }
   .star.outline { color: var(--ink-soft); }
@@ -141,6 +144,22 @@ function renderFavorites() {
   const row = document.getElementById('favorites-row');
   const hint = document.getElementById('no-favorites');
   row.innerHTML = '';
+  
+  // Hardcoded "Use parent model" chip — always visible
+  const inheritChip = document.createElement('div');
+  inheritChip.className = 'fav-chip fav-chip--inherit';
+  inheritChip.innerHTML = '<span class="fav-model">Use parent model</span> <span class="inherit-icon">↳</span>';
+  inheritChip.addEventListener('click', function() {
+    if (expandedAgent) {
+      agents[expandedAgent].model = '__inherit__';
+      agents[expandedAgent].modelId = null;
+      agents[expandedAgent].inherit = true;
+      agents[expandedAgent].provider = agents[expandedAgent].provider || (providers[0]?.id);
+      renderAgents();
+    }
+  });
+  row.appendChild(inheritChip);
+
   if (favorites.length === 0) { hint.style.display = 'block'; return; }
   hint.style.display = 'none';
   for (const fav of favorites) {
@@ -149,7 +168,7 @@ function renderFavorites() {
     chip.innerHTML = '<span class="fav-provider">' + esc(fav.provider) + '</span> <span class="fav-model">' + esc(fav.model) + (isVisionModel(fm) ? ' (V)' : '') + '</span> <span class="star filled">★</span>';
     chip.addEventListener('click', function(e) {
       if (e.target.classList.contains('star')) return;
-      if (expandedAgent) { agents[expandedAgent].provider = fav.provider; agents[expandedAgent].modelId = fav.model; agents[expandedAgent].model = fav.provider + '/' + fav.model; renderAgents(); }
+      if (expandedAgent) { agents[expandedAgent].provider = fav.provider; agents[expandedAgent].modelId = fav.model; agents[expandedAgent].model = fav.provider + '/' + fav.model; agents[expandedAgent].inherit = false; renderAgents(); }
     });
     chip.querySelector('.star').addEventListener('click', function(e) { e.stopPropagation(); removeFavorite(fav); });
     row.appendChild(chip);
