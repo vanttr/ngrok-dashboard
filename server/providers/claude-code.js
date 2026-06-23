@@ -1,26 +1,14 @@
 // server/providers/claude-code.js
+// Claude Code usage provider — reads from claude.ai internal API using browser session cookie
+// Uses Firefox cookies (separate from CLI OAuth) — cannot sign out the CLI
 'use strict';
-const fs = require('fs');
-const os = require('os');
 const path = require('path');
+const os = require('os');
+const fs = require('fs');
+const Database = require('better-sqlite3');
 const { createProviderResult } = require('./provider-result.js');
 
-function getClaudeCredentialsPath(homeDir = os.homedir(), platform = process.platform) {
-  if (platform === 'win32') {
-    return path.join(homeDir, '.claude', '.credentials.json');
-  }
-  return path.join(homeDir, '.claude', '.credentials.json');
-}
-
-function readCredentials(credentialsPath, readFileFn = fs.readFileSync) {
-  const raw = JSON.parse(readFileFn(credentialsPath, 'utf8'));
-  const oauth = raw.claudeAiOauth || raw.oauth || raw;
-  return {
-    accessToken: oauth.accessToken || oauth.access_token || raw.accessToken || raw.access_token,
-    refreshToken: oauth.refreshToken || oauth.refresh_token || raw.refreshToken || raw.refresh_token,
-    expiresAt: oauth.expiresAt || oauth.expires_at || raw.expiresAt || raw.expires_at || null
-  };
-}
+const FF_PROFILE = path.join(os.homedir(), 'AppData', 'Roaming', 'Mozilla', 'Firefox', 'Profiles', 'g03o95vf.default-nightly');
 
 function normalizeClaudeUtilization(utilization) {
   if (typeof utilization !== 'number' || !Number.isFinite(utilization)) return null;
@@ -28,46 +16,78 @@ function normalizeClaudeUtilization(utilization) {
   return Math.round(utilization);
 }
 
-function computeResetsAt(apiResetsAt, windowDurationMins) {
-  if (apiResetsAt) return apiResetsAt;
-  return new Date(Date.now() + windowDurationMins * 60 * 1000).toISOString();
+function readSessionKey(cookiePath) {
+  if (!fs.existsSync(cookiePath)) return null;
+  let db;
+  try {
+    db = new Database(cookiePath, { readonly: true });
+    const key = db.prepare(
+      `SELECT value FROM moz_cookies WHERE host = '.claude.ai' AND name = 'sessionKey' ORDER BY expiry DESC LIMIT 1`
+    ).pluck().get();
+    return key || null;
+  } catch {
+    return null;
+  } finally {
+    if (db) db.close();
+  }
 }
 
 async function fetchClaudeCodeProviderData({ deps = {} } = {}) {
-  const credentialsPath = deps.credentialsPath || getClaudeCredentialsPath(deps.homeDir || os.homedir(), deps.platform || process.platform);
-  let credentials = readCredentials(credentialsPath, deps.readFileFn);
-  if (!credentials.accessToken || !credentials.refreshToken) {
-    throw new Error('Claude credentials file is missing OAuth tokens.');
-  }
   const fetcher = deps.fetchFn || fetch;
-  const response = await fetcher('https://api.anthropic.com/api/oauth/usage', {
-    headers: {
-      Authorization: `Bearer ${credentials.accessToken}`,
-      'anthropic-beta': 'oauth-2025-04-20'
-    }
-  });
-  if (!response.ok) {
-    throw new Error(`Claude usage request failed with status ${response.status}.`);
-  }
-  const payload = await response.json();
 
-  // Check for OAuth error (token expired — needs refresh)
-  if (payload?.error) {
-    throw new Error(`Claude OAuth error: ${payload.error.message || payload.error}`);
+  // 1. Read session key from Firefox cookies
+  const cookiePath = path.join(FF_PROFILE, 'cookies.sqlite');
+  const sessionKey = readSessionKey(cookiePath);
+  if (!sessionKey) {
+    return createProviderResult({
+      error: { message: 'Claude session expired. Log into claude.ai in Firefox.' }
+    });
   }
 
-  return createProviderResult({
-    fiveHour: {
-      usedPercent: normalizeClaudeUtilization(payload?.five_hour?.utilization),
-      resetsAt: computeResetsAt(payload?.five_hour?.resets_at, 300),
-      windowDurationMins: 300
-    },
-    sevenDay: {
-      usedPercent: normalizeClaudeUtilization(payload?.seven_day?.utilization),
-      resetsAt: computeResetsAt(payload?.seven_day?.resets_at, 10080),
-      windowDurationMins: 10080
+  const headers = {
+    'Cookie': `sessionKey=${sessionKey}`,
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:138.0) Gecko/20100101 Firefox/138.0'
+  };
+
+  try {
+    // 2. Get organization ID
+    const orgResp = await fetcher('https://claude.ai/api/organizations', { headers });
+    if (!orgResp.ok) {
+      throw new Error(`Organizations request failed (${orgResp.status})`);
     }
-  });
+    const orgs = await orgResp.json();
+    const orgId = orgs?.[0]?.uuid;
+    if (!orgId) {
+      throw new Error('No organization found');
+    }
+
+    // 3. Get usage data
+    const usageResp = await fetcher(
+      `https://claude.ai/api/organizations/${orgId}/usage`,
+      { headers }
+    );
+    if (!usageResp.ok) {
+      throw new Error(`Usage request failed (${usageResp.status})`);
+    }
+    const payload = await usageResp.json();
+
+    return createProviderResult({
+      fiveHour: {
+        usedPercent: normalizeClaudeUtilization(payload?.five_hour?.utilization),
+        resetsAt: payload?.five_hour?.resets_at ?? null,
+        windowDurationMins: 300
+      },
+      sevenDay: {
+        usedPercent: normalizeClaudeUtilization(payload?.seven_day?.utilization),
+        resetsAt: payload?.seven_day?.resets_at ?? null,
+        windowDurationMins: 10080
+      }
+    });
+  } catch (err) {
+    return createProviderResult({
+      error: { message: `Claude usage unavailable: ${err.message}` }
+    });
+  }
 }
 
-module.exports = { fetchClaudeCodeProviderData, getClaudeCredentialsPath, readCredentials, normalizeClaudeUtilization };
+module.exports = { fetchClaudeCodeProviderData, readSessionKey, normalizeClaudeUtilization };

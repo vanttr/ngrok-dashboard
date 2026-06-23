@@ -39,7 +39,7 @@ async function fetchCodexProviderData({ deps = {} } = {}) {
   let buffer = '';
   const initializePromise = new Promise((resolve, reject) => {
     const timeout = setTimeout(() => { child.kill('SIGTERM'); reject(new Error('Codex app-server timed out.')); }, timeoutMs);
-    function cleanup() { clearTimeout(timeout); child.stdout?.off('data', onData); child.stderr?.off('data', onStderr); child.off('error', onError); child.off('exit', onExit); }
+    function cleanup() { clearTimeout(timeout); child.stdout?.off('data', onData); child.stderr?.off('data', onStderr); child.off('error', onError); child.off('exit', onExit); child.kill('SIGTERM'); }
     function onError(error) { cleanup(); reject(error); }
     function onExit(code) { cleanup(); reject(new Error(`Codex app-server exited before responding (code ${code}).`)); }
     function onStderr(chunk) { void chunk; /* stderr not fatal */ }
@@ -52,7 +52,7 @@ async function fetchCodexProviderData({ deps = {} } = {}) {
         let message;
         try { message = JSON.parse(line); } catch { cleanup(); reject(new Error('Codex app-server returned invalid JSON.')); return; }
         if (message.error) { cleanup(); reject(createJsonRpcError(message.error.message || 'Unknown error')); return; }
-        if (message.id === 2) { cleanup(); child.kill('SIGTERM'); resolve(message.result); }
+        if (message.id === 2) { cleanup(); resolve(message.result); }
       }
     }
     child.on('error', onError);
