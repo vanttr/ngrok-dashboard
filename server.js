@@ -2081,6 +2081,25 @@ const server = http.createServer(async (req, res) => {
       fs.writeFileSync(tmpPath, JSON.stringify(config, null, 2), 'utf8');
       fs.renameSync(tmpPath, opencodeConfigPath);
 
+      // Also update auth.json (OpenCode CLI credential store)
+      const authPath = path.join(os.homedir(), '.local', 'share', 'opencode', 'auth.json');
+      if (fs.existsSync(authPath)) {
+        let authConfig;
+        try {
+          authConfig = JSON.parse(fs.readFileSync(authPath, 'utf8'));
+        } catch {
+          // auth.json may be malformed — skip rather than fail
+          authConfig = null;
+        }
+        if (authConfig) {
+          if (authConfig.opencode) authConfig.opencode.key = ws.apiKey;
+          if (authConfig['opencode-go']) authConfig['opencode-go'].key = ws.apiKey;
+          const authTmpPath = authPath + '.tmp';
+          fs.writeFileSync(authTmpPath, JSON.stringify(authConfig, null, 2), 'utf8');
+          fs.renameSync(authTmpPath, authPath);
+        }
+      }
+
       // Update usage.json
       USAGE_CONFIG.opencodeGoActiveWorkspace = workspaceKey;
       const usageTmpPath = path.join(__dirname, 'usage.json.tmp');

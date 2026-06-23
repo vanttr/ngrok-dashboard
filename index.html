@@ -733,6 +733,16 @@
     background: var(--down-bg);
   }
 
+  .ws-id-subtitle {
+    font-size: 0.72rem;
+    color: var(--ink-soft);
+    margin-bottom: 0.35rem;
+    font-family: 'Consolas', 'Courier New', monospace;
+    opacity: 0.7;
+    padding: 0.15rem 0;
+    border-bottom: 1px solid rgba(100,118,130,0.08);
+  }
+
   .provider-card__body {
     display: grid;
     gap: 0.5rem;
@@ -896,6 +906,7 @@ function tunnelButtonLabel(state) {
 // ---- Provider Usage Card Rendering ----
 let providerCardMap = {};
 let activeWorkspaceKey = null;
+let workspaceList = [];
 
 async function fetchWorkspaces() {
   try {
@@ -903,6 +914,7 @@ async function fetchWorkspaces() {
     if (!resp.ok) return;
     const data = await resp.json();
     activeWorkspaceKey = data.activeWorkspace;
+    workspaceList = data.workspaces || [];
   } catch (err) {
     // silently ignore
   }
@@ -1016,6 +1028,15 @@ function renderProviders(providers) {
     card.className = 'provider-card' + dangerClass;
 
     let bodyHTML = '';
+    // Workspace ID subtitle for Go and Zen cards
+    const wsMatch = p.providerId.match(/^opencode_(go|zen)_(.+)$/);
+    if (wsMatch) {
+      const wsKey = wsMatch[2];
+      const wsInfo = workspaceList.find(w => w.key === wsKey);
+      if (wsInfo) {
+        bodyHTML += '<div class="ws-id-subtitle">' + esc(wsInfo.id) + '</div>';
+      }
+    }
     // 5h limit row
     if (state.fiveHour) {
       const pct = state.fiveHour.usedPercent ?? 0;
