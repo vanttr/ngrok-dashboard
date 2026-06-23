@@ -165,34 +165,46 @@ function renderAgents() {
   if (names.length === 0) { container.innerHTML = '<p class="hint">No subagents found in opencode.json. Add agents with "mode": "subagent" to configure them here.</p>'; return; }
   for (var ni = 0; ni < names.length; ni++) {
     var name = names[ni], agent = agents[name], isExpanded = expandedAgent === name, agentModel = findModel(agent.provider, agent.modelId);
+    var isInherit = agent.inherit === true;
+    var displayLabel = isInherit ? 'Using parent model' : (esc(agent.provider) + ' › ' + esc(agent.modelId) + (isVisionModel(agentModel) ? ' (V)' : ''));
     var row = document.createElement('div');
     row.className = 'agent-row' + (isExpanded ? ' expanded' : '');
     if (isExpanded) {
-      row.innerHTML = '<div class="agent-header"><span class="agent-name">' + esc(name) + '</span><span class="agent-current">' + esc(agent.provider) + ' › ' + esc(agent.modelId) + (isVisionModel(agentModel) ? ' (V)' : '') + '</span><span class="expand-arrow">▾</span></div>' +
+      var currentModelId = isInherit ? '__inherit__' : agent.modelId;
+      row.innerHTML = '<div class="agent-header"><span class="agent-name">' + esc(name) + '</span><span class="agent-current">' + displayLabel + '</span><span class="expand-arrow">▾</span></div>' +
         '<div class="agent-controls">' +
-        '<span class="star ' + (isFavorited(agent.provider, agent.modelId) ? 'filled' : 'outline') + '">' + (isFavorited(agent.provider, agent.modelId) ? '★' : '☆') + '</span>' +
+        '<span class="star ' + (isInherit ? 'outline' : (isFavorited(agent.provider, agent.modelId) ? 'filled' : 'outline')) + '">' + ((!isInherit && isFavorited(agent.provider, agent.modelId)) ? '★' : '☆') + '</span>' +
         '<select class="sel-provider">' + providers.map(function(p) { return '<option value="' + esc(p.id) + '"' + (p.id === agent.provider ? ' selected' : '') + '>' + esc(p.name || p.id) + '</option>'; }).join('') + '</select>' +
-        '<select class="sel-model">' + models.filter(function(m) { return m.provider === agent.provider; }).map(function(m) { return '<option value="' + esc(m.id) + '"' + (m.id === agent.modelId ? ' selected' : '') + '>' + esc((m.name || m.id) + (isVisionModel(m) ? ' (V)' : '')) + '</option>'; }).join('') + '</select></div>';
+        '<select class="sel-model">' +
+        '<option value="__inherit__"' + (isInherit ? ' selected' : '') + '>Use parent model</option>' +
+        models.filter(function(m) { return m.provider === (isInherit ? providers[0]?.id : agent.provider); }).map(function(m) { return '<option value="' + esc(m.id) + '"' + (m.id === agent.modelId ? ' selected' : '') + '>' + esc((m.name || m.id) + (isVisionModel(m) ? ' (V)' : '')) + '</option>'; }).join('') + '</select></div>';
     } else {
-      row.innerHTML = '<div class="agent-header"><span class="agent-name">' + esc(name) + '</span><span class="agent-current">' + esc(agent.provider) + ' › ' + esc(agent.modelId) + (isVisionModel(agentModel) ? ' (V)' : '') + '</span><span class="expand-arrow">▸</span></div>';
+      row.innerHTML = '<div class="agent-header"><span class="agent-name">' + esc(name) + '</span><span class="agent-current">' + displayLabel + '</span><span class="expand-arrow">▸</span></div>';
     }
     row.querySelector('.agent-header').addEventListener('click', function(n) { return function() { expandedAgent = expandedAgent === n ? null : n; renderAgents(); }; }(name));
     var selProv = row.querySelector('.sel-provider'), selModel = row.querySelector('.sel-model');
     if (selProv) {
       selProv.addEventListener('change', function(n, sp, sm) { return function() {
-        var np = sp.value; agents[n].provider = np;
+        var np = sp.value; agents[n].provider = np; agents[n].inherit = false;
         var filtered = models.filter(function(m) { return m.provider === np; });
-        sm.innerHTML = filtered.map(function(m) { return '<option value="' + esc(m.id) + '">' + esc((m.name || m.id) + (isVisionModel(m) ? ' (V)' : '')) + '</option>'; }).join('');
-        if (filtered.length > 0) { agents[n].modelId = filtered[0].id; agents[n].model = np + '/' + filtered[0].id; }
+        var inheritOpt = '<option value="__inherit__">Use parent model</option>';
+        sm.innerHTML = inheritOpt + filtered.map(function(m) { return '<option value="' + esc(m.id) + '">' + esc((m.name || m.id) + (isVisionModel(m) ? ' (V)' : '')) + '</option>'; }).join('');
+        if (filtered.length > 0) { agents[n].modelId = filtered[0].id; agents[n].model = np + '/' + filtered[0].id; sm.value = filtered[0].id; }
+        else { agents[n].modelId = null; agents[n].model = null; agents[n].inherit = true; sm.value = '__inherit__'; }
       }; }(name, selProv, selModel));
     }
     if (selModel) {
-      selModel.addEventListener('change', function(n, sm) { return function() { agents[n].modelId = sm.value; agents[n].model = agents[n].provider + '/' + sm.value; }; }(name, selModel));
+      selModel.addEventListener('change', function(n, sm) { return function() {
+        var v = sm.value;
+        if (v === '__inherit__') { agents[n].model = '__inherit__'; agents[n].modelId = null; agents[n].provider = agents[n].provider || (providers[0]?.id); agents[n].inherit = true; }
+        else { agents[n].modelId = v; agents[n].model = agents[n].provider + '/' + v; agents[n].inherit = false; }
+      }; }(name, selModel));
     }
     var star = row.querySelector('.star');
     if (star) {
       star.addEventListener('click', function(n) { return function(e) {
         e.stopPropagation();
+        if (agents[n].inherit) return;
         if (isFavorited(agents[n].provider, agents[n].modelId)) { removeFavorite({ provider: agents[n].provider, model: agents[n].modelId }); }
         else { addFavorite(agents[n].provider, agents[n].modelId); }
       }; }(name));

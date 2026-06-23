@@ -2457,13 +2457,22 @@ function readSubagentConfig(configPath) {
   const agents = {};
   if (config.agent) {
     for (const [name, entry] of Object.entries(config.agent)) {
-      if (entry.mode === 'subagent' && entry.model) {
-        const parsed = parseModelId(entry.model);
-        agents[name] = {
-          model: entry.model,
-          provider: parsed.provider,
-          modelId: parsed.modelId
-        };
+      if (entry.mode === 'subagent') {
+        if (entry.model) {
+          const parsed = parseModelId(entry.model);
+          agents[name] = {
+            model: entry.model,
+            provider: parsed.provider,
+            modelId: parsed.modelId
+          };
+        } else {
+          agents[name] = {
+            model: null,
+            provider: null,
+            modelId: null,
+            inherit: true
+          };
+        }
       }
     }
   }
@@ -2479,7 +2488,11 @@ function patchAgentModels(configPath, updates) {
     if (!config.agent[name]) {
       throw new Error(`Unknown agent: ${name}`);
     }
-    config.agent[name].model = model;
+    if (model === null || model === '__inherit__') {
+      delete config.agent[name].model;
+    } else {
+      config.agent[name].model = model;
+    }
   }
 
   const tmpPath = configPath + '.tmp';
