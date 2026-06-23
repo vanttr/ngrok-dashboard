@@ -4,18 +4,12 @@
 const { createProviderResult } = require('./provider-result.js');
 
 async function fetchOpenCodeZenProviderData({ settings } = {}) {
-  // 1. Config override (fastest)
-  if (settings && settings.zenBalanceUsd !== undefined && settings.zenBalanceUsd !== null && settings.zenBalanceUsd !== '') {
-    const balance = Number(settings.zenBalanceUsd);
-    if (Number.isFinite(balance)) {
-      return createProviderResult({ balanceUsd: balance });
-    }
-  }
+  const workspaceId = settings?.workspaceId;
 
-  // 2. Scrape live balance
+  // 1. Scrape live balance for the given workspace
   try {
     const { scrapeZenBalance } = require('./opencode-scraper.js');
-    const balance = await scrapeZenBalance();
+    const balance = await scrapeZenBalance(workspaceId);
     if (balance !== null && Number.isFinite(balance)) {
       return createProviderResult({ balanceUsd: balance });
     }
@@ -23,7 +17,7 @@ async function fetchOpenCodeZenProviderData({ settings } = {}) {
     console.error('Zen scraper error:', err.message);
   }
 
-  // 3. Fall back to local DB
+  // 2. Fall back to local DB
   try {
     const dbModule = require('./opencode-local-db.js');
     const db = dbModule.openDB();

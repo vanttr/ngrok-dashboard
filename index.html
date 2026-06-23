@@ -697,6 +697,42 @@
     white-space: nowrap;
   }
 
+  .activate-btn {
+    display: inline-flex;
+    align-items: center;
+    font-size: var(--text-xs);
+    font-weight: 500;
+    padding: 0.25rem 0.65rem;
+    border-radius: var(--radius-pill);
+    border: 1px solid var(--accent);
+    background: transparent;
+    color: var(--accent);
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background 0.15s, color 0.15s;
+  }
+  .activate-btn:hover {
+    background: var(--accent);
+    color: #fff;
+  }
+  .activate-btn--active {
+    display: inline-flex;
+    align-items: center;
+    font-size: var(--text-xs);
+    font-weight: 500;
+    padding: 0.25rem 0.65rem;
+    border-radius: var(--radius-pill);
+    background: rgba(46,125,68,0.13);
+    color: #315343;
+    white-space: nowrap;
+    cursor: default;
+  }
+  .activate-btn--error {
+    border-color: var(--down);
+    color: var(--down);
+    background: var(--down-bg);
+  }
+
   .provider-card__body {
     display: grid;
     gap: 0.5rem;
@@ -859,6 +895,47 @@ function tunnelButtonLabel(state) {
 
 // ---- Provider Usage Card Rendering ----
 let providerCardMap = {};
+let activeWorkspaceKey = null;
+
+async function fetchWorkspaces() {
+  try {
+    const resp = await fetch('/api/opencode/workspaces');
+    if (!resp.ok) return;
+    const data = await resp.json();
+    activeWorkspaceKey = data.activeWorkspace;
+  } catch (err) {
+    // silently ignore
+  }
+}
+
+async function activateWorkspace(workspaceKey) {
+  try {
+    const resp = await fetch('/api/opencode/workspaces/activate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ workspace: workspaceKey })
+    });
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({}));
+      throw new Error(err.error || 'Activation failed');
+    }
+    const data = await resp.json();
+    activeWorkspaceKey = data.activeWorkspace;
+    fetchProviders(); // refresh cards to update badges
+  } catch (err) {
+    console.error('Workspace activation failed:', err.message);
+    // Flash error on the button that was clicked
+    const btn = document.querySelector(`.activate-btn[data-workspace="${workspaceKey}"]`);
+    if (btn) {
+      btn.classList.add('activate-btn--error');
+      btn.textContent = 'ERROR';
+      setTimeout(() => {
+        btn.classList.remove('activate-btn--error');
+        btn.textContent = 'ACTIVATE';
+      }, 2000);
+    }
+  }
+}
 
 function providerStatesEqual(a, b) {
   if (!a || !b) return false;
@@ -999,10 +1076,25 @@ function renderProviders(providers) {
       '</div>';
     }
 
+    // Parse workspace key for Go cards
+    const goWsMatch = p.providerId.match(/^opencode_go_(.+)$/);
+    const wsKey = goWsMatch ? goWsMatch[1] : null;
+    const isActive = wsKey && wsKey === activeWorkspaceKey;
+
+    let headerExtra = '';
+    if (wsKey) {
+      if (isActive) {
+        headerExtra = '<span class="activate-btn--active">ACTIVE</span>';
+      } else {
+        headerExtra = '<button class="activate-btn" data-workspace="' + esc(wsKey) + '" onclick="activateWorkspace(\'' + esc(wsKey) + '\')">ACTIVATE</button>';
+      }
+    }
+
     card.innerHTML =
       '<div class="provider-card__header">' +
         '<span class="provider-name">' + esc(state.displayName) + '</span>' +
         '<span class="status-pill--' + state.status + '">' + (STATUS_LABELS[state.status] || state.status) + '</span>' +
+        headerExtra +
       '</div>' +
       '<div class="provider-card__body">' +
         bodyHTML +
@@ -1429,8 +1521,13 @@ function renderScheduler(data) {
   container.innerHTML = html;
 }
 
+async function initDashboard() {
+  await fetchWorkspaces();
+  fetchProviders();
+}
+
 fetchState();
-fetchProviders();
+initDashboard();
 setInterval(fetchState, 10000);
 setInterval(fetchProviders, 60000);
 

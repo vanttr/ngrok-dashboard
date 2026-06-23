@@ -43,18 +43,24 @@ try {
 const USAGE_POLL_MS = Math.max(1, Math.min(60, USAGE_CONFIG.pollIntervalMinutes || 5)) * 60 * 1000;
 
 let refreshService = null;
+let settings = null;
 function initProviderTracking() {
   try {
     const dbDir = path.join(__dirname, '.tmp');
     if (!fs.existsSync(dbDir)) fs.mkdirSync(dbDir, { recursive: true });
     const database = new Database(path.join(dbDir, 'provider-cache.sqlite'));
     const providerCacheRepo = createProviderCacheRepo(database);
-    const registry = createProviderRegistry();
-    const settings = {
+    const workspaces = USAGE_CONFIG.opencodeGoWorkspaces || {};
+    const activeKey = USAGE_CONFIG.opencodeGoActiveWorkspace || Object.keys(workspaces)[0] || null;
+    const activeWs = activeKey && workspaces[activeKey] ? workspaces[activeKey] : null;
+    const registry = createProviderRegistry({}, workspaces);
+    settings = {
       openrouterApiKey: USAGE_CONFIG.openrouterApiKey || '',
       deepseekApiKey: USAGE_CONFIG.deepseekApiKey || '',
       opencodeGoApiKey: USAGE_CONFIG.opencodeGoApiKey || '',
-      zenBalanceUsd: USAGE_CONFIG.zenBalanceUsd
+      opencodeGoWorkspaces: workspaces,
+      opencodeGoActiveWorkspace: activeKey,
+      opencodeGoActiveLabel: activeWs ? activeWs.label : null
     };
     refreshService = createRefreshService({ registry, providerCacheRepo, settings });
     // Initial fetch (async, non-blocking)
@@ -511,8 +517,8 @@ function stopNgrok() {
   }
 }
 
-process.on('SIGINT', () => { stopNgrok(); process.exit(0); });
-process.on('SIGTERM', () => { stopNgrok(); process.exit(0); });
+process.on('SIGINT', () => { stopScheduler(); stopNgrok(); process.exit(0); });
+process.on('SIGTERM', () => { stopScheduler(); stopNgrok(); process.exit(0); });
 process.on('exit', () => { stopNgrok(); stopScheduler(); });
 
 // ---- Scheduler ----
@@ -531,6 +537,26 @@ function wordWrap(s, width) {
   if (remaining) lines.push(remaining);
   return lines.join('\n');
 }
+
+// forceKill: SIGTERM first, then taskkill /F /T as fallback on Windows.
+// SIGTERM on Windows maps to TerminateProcess() which only kills the direct child.
+// taskkill /F /T kills the entire process tree including grandchildren, preventing orphans.
+function forceKill(child) {
+  if (!child || child.killed || child.exitCode !== null) return;
+  try { child.kill('SIGTERM'); } catch {}
+  if (process.platform !== 'win32') return;
+  const forceKillTimer = setTimeout(() => {
+    try {
+      if (child.exitCode !== null) return;
+      const { execSync } = require('child_process');
+      execSync(`taskkill /F /T /PID ${child.pid}`, { windowsHide: true, timeout: 3000 });
+    } catch { /* process may already be dead */ }
+  }, 5000);
+  child.once('close', () => clearTimeout(forceKillTimer));
+}
+
+// Track all active spawned child processes so stopScheduler() can kill them on shutdown.
+const activeChildren = new Set();
 
 // Auto-detect the auth header type from the credential value or config field.
 // "api-key" tokens start with "sk-ant-api" — use x-api-key header.
@@ -823,18 +849,25 @@ function callClaudeCLI(prompt) {
       shell: needsShell(claudePath)
     });
 
+    activeChildren.add(child);
+
     let stdout = '';
     let stderr = '';
+    let settled = false;
     child.stdout.on('data', (chunk) => { stdout += chunk.toString(); });
     child.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
 
     const timer = setTimeout(() => {
-      child.kill('SIGTERM');
+      settled = true;
+      forceKill(child);
       reject(new Error('Claude CLI timed out (90s)'));
     }, 90000);
 
     child.on('close', (code) => {
       clearTimeout(timer);
+      if (settled) return;
+      activeChildren.delete(child);
+      settled = true;
       if (code !== 0) {
         const detail = stderr.trim().slice(0, 200) || `exit code ${code}`;
         reject(new Error(`Claude CLI error: ${detail}`));
@@ -850,6 +883,9 @@ function callClaudeCLI(prompt) {
 
     child.on('error', (err) => {
       clearTimeout(timer);
+      if (settled) return;
+      activeChildren.delete(child);
+      settled = true;
       if (err.code === 'ENOENT') {
         reject(new Error(`Claude CLI not found: 'claude' command not in PATH`));
       } else {
@@ -882,17 +918,24 @@ function callCodexCLI(prompt) {
       stdio: ['ignore', 'ignore', 'pipe']  // discard stdout, keep stderr
     });
 
+    activeChildren.add(child);
+
     let stderr = '';
+    let settled = false;
     child.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
 
     const timer = setTimeout(() => {
-      child.kill('SIGTERM');
+      settled = true;
       try { fs.unlinkSync(tmpFile); } catch {}
+      forceKill(child);
       reject(new Error('Codex CLI timed out (60s)'));
     }, 60000);
 
     child.on('close', (code) => {
       clearTimeout(timer);
+      if (settled) return;
+      activeChildren.delete(child);
+      settled = true;
       if (code !== 0) {
         try { fs.unlinkSync(tmpFile); } catch {}
         const detail = stderr.trim().slice(0, 200) || `exit code ${code}`;
@@ -915,6 +958,9 @@ function callCodexCLI(prompt) {
 
     child.on('error', (err) => {
       clearTimeout(timer);
+      if (settled) return;
+      activeChildren.delete(child);
+      settled = true;
       try { fs.unlinkSync(tmpFile); } catch {}
       if (err.code === 'ENOENT') {
         reject(new Error(`Codex CLI not found: node or codex.js not accessible`));
@@ -952,16 +998,23 @@ function callAntigravityCLI(prompt, model) {
       stdio: ['ignore', 'pipe', 'pipe']
     });
 
+    activeChildren.add(child);
+
     let stderr = '';
+    let settled = false;
     child.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
 
     const timer = setTimeout(() => {
-      child.kill('SIGTERM');
+      settled = true;
+      forceKill(child);
       reject(new Error('Antigravity CLI timed out (60s)'));
     }, 60000);
 
     child.on('close', (code) => {
       clearTimeout(timer);
+      if (settled) return;
+      activeChildren.delete(child);
+      settled = true;
 
       // Discover the conversation DB. Primary: last_conversations.json.
       // Fallback: find a new .db file that appeared during this session.
@@ -1046,6 +1099,9 @@ function callAntigravityCLI(prompt, model) {
 
     child.on('error', (err) => {
       clearTimeout(timer);
+      if (settled) return;
+      activeChildren.delete(child);
+      settled = true;
       if (err.code === 'ENOENT') {
         reject(new Error('Antigravity CLI not found: agy is not on PATH'));
       } else {
@@ -1239,6 +1295,7 @@ async function fireOneTarget(target, prompt) {
 // Tick counter for heartbeat — log every 60th tick (~30 min) even when idle
 let _schedulerTickCount = 0;
 const SCHEDULER_DEBUG = !!process.env.SCHEDULER_DEBUG;
+let _schedulerBusy = false; // prevents overlapping fires
 
 async function fireAllTargets(force = false) {
   _schedulerTickCount++;
@@ -1252,6 +1309,13 @@ async function fireAllTargets(force = false) {
   }
 
   if (!force) {
+    // Prevent overlapping fires — if the previous fire is still running, skip this tick.
+    // The lastFiredSlot guard prevents same-minute duplicate, but cross-minute overlap
+    // can happen if a target's CLI process exceeds the 30s tick interval.
+    if (_schedulerBusy) {
+      if (SCHEDULER_DEBUG) console.log(`Scheduler: skip — previous fire still in progress`);
+      return;
+    }
     if (schedulerState.lastFiredSlot === slotKey) {
       if (SCHEDULER_DEBUG) console.log(`Scheduler: skip — slot ${slotKey} already fired`);
       return;
@@ -1267,23 +1331,28 @@ async function fireAllTargets(force = false) {
     }
   }
 
+  _schedulerBusy = true;
   schedulerState.lastFiredSlot = slotKey;
   console.log(`Scheduler: firing at ${slotKey}`);
 
-  // Fire all targets in parallel — one timeout does not block the other
-  await Promise.allSettled(
-    schedulerState.targets.map(t => fireOneTarget(t, schedulerState.prompt))
-  );
+  try {
+    // Fire all targets in parallel — one timeout does not block the other
+    await Promise.allSettled(
+      schedulerState.targets.map(t => fireOneTarget(t, schedulerState.prompt))
+    );
 
-  // Log per-target results
-  for (const t of schedulerState.targets) {
-    if (t.status === 'success') {
-      console.log(`  ${t.name}: OK`);
-      console.log(`    "${t.responsePreview || ''}"`);
-    } else {
-      console.log(`  ${t.name}: FAIL`);
-      console.log(`    ${wordWrap(t.error || 'unknown error', 70)}`);
+    // Log per-target results
+    for (const t of schedulerState.targets) {
+      if (t.status === 'success') {
+        console.log(`  ${t.name}: OK`);
+        console.log(`    "${t.responsePreview || ''}"`);
+      } else {
+        console.log(`  ${t.name}: FAIL`);
+        console.log(`    ${wordWrap(t.error || 'unknown error', 70)}`);
+      }
     }
+  } finally {
+    _schedulerBusy = false;
   }
 }
 
@@ -1311,6 +1380,13 @@ function stopScheduler() {
     clearInterval(schedulerTimer);
     schedulerTimer = null;
   }
+  // Kill all in-flight child processes to prevent orphans.
+  // Each spawn function adds its child to activeChildren and removes it on exit;
+  // anything still in the set is still running and needs cleanup.
+  for (const child of activeChildren) {
+    forceKill(child);
+  }
+  activeChildren.clear();
 }
 
 // ---- Server Discovery & Health Check ----
@@ -1958,6 +2034,68 @@ const server = http.createServer(async (req, res) => {
       return jsonResponse(res, 200, refreshService.listProviderRows());
     } catch (err) {
       return jsonResponse(res, 500, { ok: false, error: err.message });
+    }
+  }
+
+  // ---- Workspace API ----
+  if (pathname === '/api/opencode/workspaces' && req.method === 'GET') {
+    const ws = USAGE_CONFIG.opencodeGoWorkspaces || {};
+    const active = USAGE_CONFIG.opencodeGoActiveWorkspace || null;
+    const workspaceList = Object.entries(ws).map(([key, w]) => ({ key, label: w.label, id: w.id }));
+    return jsonResponse(res, 200, { workspaces: workspaceList, activeWorkspace: active });
+  }
+
+  if (pathname === '/api/opencode/workspaces/activate' && req.method === 'POST') {
+    try {
+      const body = await readBody(req);
+      let payload;
+      try { payload = JSON.parse(body); } catch {
+        return jsonResponse(res, 400, { ok: false, error: 'Invalid request body' });
+      }
+      const workspaceKey = payload.workspace;
+      const workspaces = USAGE_CONFIG.opencodeGoWorkspaces || {};
+      if (!workspaceKey || !workspaces[workspaceKey]) {
+        return jsonResponse(res, 400, { ok: false, error: `Unknown workspace: ${workspaceKey}` });
+      }
+      const ws = workspaces[workspaceKey];
+      if (!ws.apiKey) {
+        return jsonResponse(res, 400, { ok: false, error: 'Workspace has no API key' });
+      }
+
+      // Read, modify, and write opencode.json (temp-file-then-rename pattern)
+      const opencodeConfigPath = path.join(os.homedir(), '.config', 'opencode', 'opencode.json');
+      if (!fs.existsSync(opencodeConfigPath)) {
+        return jsonResponse(res, 500, { ok: false, error: 'Cannot read opencode config' });
+      }
+      let config;
+      try {
+        config = JSON.parse(fs.readFileSync(opencodeConfigPath, 'utf8'));
+      } catch {
+        return jsonResponse(res, 500, { ok: false, error: 'Cannot parse opencode config' });
+      }
+      if (!config.provider || !config.provider['opencode-go'] || !config.provider['opencode-go'].options) {
+        return jsonResponse(res, 500, { ok: false, error: 'Cannot find provider config in opencode.json' });
+      }
+      config.provider['opencode-go'].options.apiKey = ws.apiKey;
+      const tmpPath = opencodeConfigPath + '.tmp';
+      fs.writeFileSync(tmpPath, JSON.stringify(config, null, 2), 'utf8');
+      fs.renameSync(tmpPath, opencodeConfigPath);
+
+      // Update usage.json
+      USAGE_CONFIG.opencodeGoActiveWorkspace = workspaceKey;
+      const usageTmpPath = path.join(__dirname, 'usage.json.tmp');
+      fs.writeFileSync(usageTmpPath, JSON.stringify(USAGE_CONFIG, null, 2), 'utf8');
+      fs.renameSync(usageTmpPath, path.join(__dirname, 'usage.json'));
+
+      // Update in-memory settings
+      if (settings) {
+        settings.opencodeGoActiveWorkspace = workspaceKey;
+        settings.opencodeGoActiveLabel = ws.label;
+      }
+
+      return jsonResponse(res, 200, { ok: true, activeWorkspace: workspaceKey, label: ws.label });
+    } catch (e) {
+      return jsonResponse(res, 500, { ok: false, error: `Failed to activate workspace: ${e.message}` });
     }
   }
 

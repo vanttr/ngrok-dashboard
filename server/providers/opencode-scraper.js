@@ -8,9 +8,14 @@ const os = require('os');
 const fs = require('fs');
 const Database = require('better-sqlite3');
 
-const WORKSPACE_ID = 'wrk_01KSPGXTQKD3H09JJKENAMW9SH';
-const GO_URL = `https://opencode.ai/workspace/${WORKSPACE_ID}/go`;
-const ZEN_URL = `https://opencode.ai/workspace/${WORKSPACE_ID}`;
+const DEFAULT_WORKSPACE_ID = 'wrk_01KSPGXTQKD3H09JJKENAMW9SH';
+
+function goUrl(workspaceId) {
+  return `https://opencode.ai/workspace/${workspaceId || DEFAULT_WORKSPACE_ID}/go`;
+}
+function zenUrl(workspaceId) {
+  return `https://opencode.ai/workspace/${workspaceId || DEFAULT_WORKSPACE_ID}`;
+}
 
 const FF_PROFILE = path.join(os.homedir(), 'AppData', 'Roaming', 'Mozilla', 'Firefox', 'Profiles', 'g03o95vf.default-nightly');
 const FF_TMP = path.join(os.tmpdir(), 'ngrok-dash-ff-profile');
@@ -33,6 +38,7 @@ function ensureProfileCopy() {
 
 let _context = null;
 let _contextCreated = 0;
+const CONTEXT_TIMEOUT = 25000; // 25s — kill zombies after this
 
 async function getContext() {
   const { firefox } = require('@playwright/test');
@@ -45,9 +51,15 @@ async function getContext() {
     _context = null;
   }
 
-  // Always copy profile (fast, ~1MB, works regardless of Firefox state)
   ensureProfileCopy();
-  _context = await firefox.launchPersistentContext(FF_TMP, { headless: true });
+
+  // Wrap in a timeout so hung launches don't leave orphaned Firefox processes
+  const launchPromise = firefox.launchPersistentContext(FF_TMP, { headless: true });
+  const timeoutPromise = new Promise((_, reject) =>
+    setTimeout(() => reject(new Error('Firefox persistent context timed out after ' + CONTEXT_TIMEOUT/1000 + 's')), CONTEXT_TIMEOUT)
+  );
+
+  _context = await Promise.race([launchPromise, timeoutPromise]);
   _contextCreated = Date.now();
   return _context;
 }
@@ -70,12 +82,12 @@ function parseResetTime(text) {
   return ms > 0 ? new Date(now + ms).toISOString() : null;
 }
 
-async function scrapeGoUsage() {
+async function scrapeGoUsage(workspaceId) {
   const context = await getContext();
   const page = await context.newPage();
   
   try {
-    await page.goto(GO_URL, { waitUntil: 'networkidle', timeout: 20000 });
+    await page.goto(goUrl(workspaceId), { waitUntil: 'networkidle', timeout: 20000 });
     await page.waitForTimeout(1500);
     
     if (page.url().includes('auth')) return null;
@@ -102,12 +114,12 @@ async function scrapeGoUsage() {
   }
 }
 
-async function scrapeZenBalance() {
+async function scrapeZenBalance(workspaceId) {
   const context = await getContext();
   const page = await context.newPage();
   
   try {
-    await page.goto(ZEN_URL, { waitUntil: 'networkidle', timeout: 20000 });
+    await page.goto(zenUrl(workspaceId), { waitUntil: 'networkidle', timeout: 20000 });
     await page.waitForTimeout(1500);
     
     if (page.url().includes('auth')) return null;
