@@ -596,6 +596,7 @@ let schedulerState = {
   prompt: SCHEDULER_CONFIG ? (SCHEDULER_CONFIG.prompt || 'hi') : 'hi',
   targets: [],
   lastFiredSlot: null,
+  manualOverrideTime: (SCHEDULER_CONFIG && SCHEDULER_CONFIG.manualOverrideTime) || null,  // ISO timestamp — persisted in servers.json, survives restarts
 };
 
 if (SCHEDULER_CONFIG && SCHEDULER_CONFIG.targets) {
@@ -1241,6 +1242,10 @@ function getSlotKey() {
 
 function computeNextFire() {
   if (!schedulerState.enabled || schedulerState.minuteOffsets.length === 0) return null;
+  // Manual override takes precedence — show the user's scheduled time
+  if (schedulerState.manualOverrideTime) {
+    return schedulerState.manualOverrideTime;
+  }
   const now = new Date();
   const currentMinute = now.getMinutes();
   const sorted = [...schedulerState.minuteOffsets].sort((a, b) => a - b);
@@ -1305,29 +1310,45 @@ async function fireAllTargets(force = false) {
 
   // Heartbeat: log every ~30 min (60 ticks) even when idle, so we know the timer is alive
   if (_schedulerTickCount % 60 === 0) {
-    console.log(`Scheduler: heartbeat tick #${_schedulerTickCount}, slot=${slotKey}, minute=${minute}, lastFired=${schedulerState.lastFiredSlot || 'never'}`);
+    console.log(`Scheduler: heartbeat tick #${_schedulerTickCount}, slot=${slotKey}, minute=${minute}, lastFired=${schedulerState.lastFiredSlot || 'never'}${schedulerState.manualOverrideTime ? ', manualOverride=' + schedulerState.manualOverrideTime : ''}`);
   }
 
   if (!force) {
-    // Prevent overlapping fires — if the previous fire is still running, skip this tick.
-    // The lastFiredSlot guard prevents same-minute duplicate, but cross-minute overlap
-    // can happen if a target's CLI process exceeds the 30s tick interval.
-    if (_schedulerBusy) {
-      if (SCHEDULER_DEBUG) console.log(`Scheduler: skip — previous fire still in progress`);
-      return;
-    }
-    if (schedulerState.lastFiredSlot === slotKey) {
-      if (SCHEDULER_DEBUG) console.log(`Scheduler: skip — slot ${slotKey} already fired`);
-      return;
-    }
-    if (!schedulerState.minuteOffsets.includes(minute)) {
-      if (SCHEDULER_DEBUG) console.log(`Scheduler: skip — minute ${minute} not in offsets [${schedulerState.minuteOffsets.join(',')}]`);
-      return;
-    }
-    // Guard: skip first second of a new minute to avoid race with tick timing
-    if (second < 1) {
-      if (SCHEDULER_DEBUG) console.log(`Scheduler: skip — second ${second} too early, waiting for next tick`);
-      return;
+    // Manual override: pause all normal fires until the specified time arrives.
+    // When the time arrives, fire once (bypassing minute-offset and slot guards) and
+    // clear the override, then resume normal schedule.
+    if (schedulerState.manualOverrideTime) {
+      const now = new Date();
+      const overrideTime = new Date(schedulerState.manualOverrideTime);
+      if (now < overrideTime) {
+        if (SCHEDULER_DEBUG) console.log(`Scheduler: skip — waiting for manual override at ${schedulerState.manualOverrideTime}`);
+        return;
+      }
+      // Time has arrived — clear override (in-memory + config) and fall through to fire logic (all guards skipped)
+      console.log(`Scheduler: manual override firing at ${now.toISOString()} (scheduled for ${schedulerState.manualOverrideTime})`);
+      schedulerState.manualOverrideTime = null;
+      persistManualOverride(null);
+    } else {
+      // Prevent overlapping fires — if the previous fire is still running, skip this tick.
+      // The lastFiredSlot guard prevents same-minute duplicate, but cross-minute overlap
+      // can happen if a target's CLI process exceeds the 30s tick interval.
+      if (_schedulerBusy) {
+        if (SCHEDULER_DEBUG) console.log(`Scheduler: skip — previous fire still in progress`);
+        return;
+      }
+      if (schedulerState.lastFiredSlot === slotKey) {
+        if (SCHEDULER_DEBUG) console.log(`Scheduler: skip — slot ${slotKey} already fired`);
+        return;
+      }
+      if (!schedulerState.minuteOffsets.includes(minute)) {
+        if (SCHEDULER_DEBUG) console.log(`Scheduler: skip — minute ${minute} not in offsets [${schedulerState.minuteOffsets.join(',')}]`);
+        return;
+      }
+      // Guard: skip first second of a new minute to avoid race with tick timing
+      if (second < 1) {
+        if (SCHEDULER_DEBUG) console.log(`Scheduler: skip — second ${second} too early, waiting for next tick`);
+        return;
+      }
     }
   }
 
@@ -1356,6 +1377,25 @@ async function fireAllTargets(force = false) {
   }
 }
 
+// Persist manual override time to servers.json so it survives server restarts.
+// Pass null to clear the override from the config file.
+function persistManualOverride(isoTime) {
+  try {
+    const configPath = path.join(__dirname, 'servers.json');
+    const raw = fs.readFileSync(configPath, 'utf8');
+    const config = JSON.parse(raw);
+    if (!config.scheduler) config.scheduler = {};
+    if (isoTime) {
+      config.scheduler.manualOverrideTime = isoTime;
+    } else {
+      delete config.scheduler.manualOverrideTime;
+    }
+    fs.writeFileSync(configPath, JSON.stringify(config, null, 2) + '\n', 'utf8');
+  } catch (e) {
+    console.error('Scheduler: failed to persist manual override to servers.json:', e.message);
+  }
+}
+
 function startScheduler() {
   if (!schedulerState.enabled) {
     console.log('Scheduler: disabled — not starting');
@@ -1370,6 +1410,27 @@ function startScheduler() {
   console.log(`  codex CLI:  ${resolveCliPath('codex')}`);
   console.log(`  antigravity CLI: agy (v1.0.5)`);
   console.log(`Scheduler: started (offsets: ${schedulerState.minuteOffsets.join(', ')})`);
+
+  // If a manual override time was loaded from config, check whether it has already passed.
+  // If it has, fire immediately and clear it. Otherwise the normal tick loop will wait.
+  if (schedulerState.manualOverrideTime) {
+    const now = new Date();
+    const overrideTime = new Date(schedulerState.manualOverrideTime);
+    if (now >= overrideTime) {
+      console.log(`Scheduler: persisted override time ${schedulerState.manualOverrideTime} has passed — firing now`);
+      const fireNow = schedulerState.manualOverrideTime; // capture before clearing
+      schedulerState.manualOverrideTime = null;
+      persistManualOverride(null);
+      // Fire asynchronously after a short delay to let the server finish starting up.
+      // Pass force=true so minute-offset guards don't block the fire.
+      setTimeout(() => {
+        fireAllTargets(true).catch(err => console.error('Scheduler: startup override fire error:', err));
+      }, 2000);
+    } else {
+      console.log(`Scheduler: manual override active — waiting until ${schedulerState.manualOverrideTime}`);
+    }
+  }
+
   schedulerTimer = setInterval(() => {
     fireAllTargets().catch(err => console.error('Scheduler tick error:', err));
   }, 30000);
@@ -1834,6 +1895,7 @@ const server = http.createServer(async (req, res) => {
       minuteOffsets: schedulerState.minuteOffsets,
       nextFire: computeNextFire(),
       prompt: schedulerState.prompt,
+      manualOverrideTime: schedulerState.manualOverrideTime,
       targets: schedulerState.targets.map(t => ({
         name: t.name,
         credentialOK: t.credentialOK,
@@ -1857,6 +1919,42 @@ const server = http.createServer(async (req, res) => {
     res.setHeader('Content-Type', 'application/json');
     res.writeHead(202);
     res.end(JSON.stringify({ ok: true, message: 'Fire triggered' }));
+    return;
+  }
+
+  // Manual override — pause scheduler until a specific time, then fire once (PUT = set, DELETE = clear)
+  if (pathname === '/api/scheduler/manual-override') {
+    if (req.method === 'PUT') {
+      try {
+        const body = await readBody(req);
+        const { time } = JSON.parse(body);
+        if (!time || isNaN(Date.parse(time))) {
+          jsonResponse(res, 400, { ok: false, error: 'Invalid or missing "time" field. Provide an ISO 8601 datetime string.' });
+          return;
+        }
+        const overrideTime = new Date(time);
+        if (overrideTime <= new Date()) {
+          jsonResponse(res, 400, { ok: false, error: 'Override time must be in the future.' });
+          return;
+        }
+        schedulerState.manualOverrideTime = overrideTime.toISOString();
+        persistManualOverride(schedulerState.manualOverrideTime);
+        console.log(`Scheduler: manual override set for ${schedulerState.manualOverrideTime}`);
+        jsonResponse(res, 200, { ok: true, manualOverrideTime: schedulerState.manualOverrideTime });
+      } catch (e) {
+        jsonResponse(res, 400, { ok: false, error: 'Invalid JSON body. Provide {"time": "ISO 8601 string"}.' });
+      }
+      return;
+    }
+    if (req.method === 'DELETE') {
+      const wasSet = !!schedulerState.manualOverrideTime;
+      schedulerState.manualOverrideTime = null;
+      persistManualOverride(null);
+      console.log(`Scheduler: manual override ${wasSet ? 'cleared' : 'already clear'}`);
+      jsonResponse(res, 200, { ok: true, message: wasSet ? 'Override cleared' : 'No override was set' });
+      return;
+    }
+    jsonResponse(res, 405, { ok: false, error: 'Method not allowed' });
     return;
   }
 
