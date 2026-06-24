@@ -66,20 +66,52 @@ async function getContext() {
 
 function parseResetTime(text) {
   // "Resets in 5 hours 0 minutes" or "Resets in 6 days 21 hours"
+  // Handles newlines / excess whitespace from innerText across block elements
   if (!text) return null;
   const now = Date.now();
-  
-  const daysHoursMatch = text.match(/Resets in (\d+) days? (\d+) hours?/);
-  const hoursMinsMatch = text.match(/Resets in (\d+) hours? (\d+) minutes?/);
-  
+
+  // Collapse all whitespace sequences (newlines, tabs, spaces) into single spaces
+  const s = text.replace(/\s+/g, ' ').trim();
+
   let ms = 0;
-  if (daysHoursMatch) {
-    ms = parseInt(daysHoursMatch[1]) * 86400000 + parseInt(daysHoursMatch[2]) * 3600000;
-  } else if (hoursMinsMatch) {
-    ms = parseInt(hoursMinsMatch[1]) * 3600000 + parseInt(hoursMinsMatch[2]) * 60000;
+
+  // "Resets in 5 days 3 hours"
+  let match = s.match(/Resets in (\d+) days? (\d+) hours?/);
+  if (match) {
+    ms = parseInt(match[1]) * 86400000 + parseInt(match[2]) * 3600000;
   }
-  
-  return ms > 0 ? new Date(now + ms).toISOString() : null;
+
+  // "Resets in 5 hours 15 minutes"
+  if (ms === 0) {
+    match = s.match(/Resets in (\d+) hours? (\d+) minutes?/);
+    if (match) {
+      ms = parseInt(match[1]) * 3600000 + parseInt(match[2]) * 60000;
+    }
+  }
+
+  // "Resets in 5 hours" (minutes omitted)
+  if (ms === 0) {
+    match = s.match(/Resets in (\d+) hours?/);
+    if (match) {
+      ms = parseInt(match[1]) * 3600000;
+    }
+  }
+
+  // "Resets in 30 minutes" (hours omitted)
+  if (ms === 0) {
+    match = s.match(/Resets in (\d+) minutes?/);
+    if (match) {
+      ms = parseInt(match[1]) * 60000;
+    }
+  }
+
+  if (ms > 0) {
+    return new Date(now + ms).toISOString();
+  }
+
+  // Parse failure — log the section text for debugging
+  console.warn(`[scraper] parseResetTime could not parse reset text: "${s.substring(0, 120)}"`);
+  return null;
 }
 
 async function scrapeGoUsage(workspaceId) {
@@ -133,4 +165,4 @@ async function scrapeZenBalance(workspaceId) {
   }
 }
 
-module.exports = { scrapeGoUsage, scrapeZenBalance, getContext };
+module.exports = { scrapeGoUsage, scrapeZenBalance, getContext, parseResetTime };

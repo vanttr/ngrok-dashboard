@@ -11,9 +11,36 @@ const { createProviderResult } = require('./provider-result.js');
 const FF_PROFILE = path.join(os.homedir(), 'AppData', 'Roaming', 'Mozilla', 'Firefox', 'Profiles', 'g03o95vf.default-nightly');
 
 function normalizeClaudeUtilization(utilization) {
+  // Kept as fallback; prefer limits[].percent which is unambiguous
   if (typeof utilization !== 'number' || !Number.isFinite(utilization)) return null;
   if (utilization <= 1) return Math.round(utilization * 100);
   return Math.round(utilization);
+}
+
+/**
+ * Extract usage percentages + reset times from the limits array.
+ * The limits array has unambiguous `percent` values (already 0-100 integers).
+ * Falls back to five_hour / seven_day fields if limits is missing.
+ */
+function extractLimits(payload) {
+  const limits = Array.isArray(payload?.limits) ? payload.limits : [];
+  const findLimit = (kind) => limits.find(l => l.kind === kind) || null;
+
+  const sessionLimit = findLimit('session');
+  const weeklyLimit  = findLimit('weekly_all');
+
+  return {
+    fiveHour: {
+      usedPercent: sessionLimit?.percent ?? normalizeClaudeUtilization(payload?.five_hour?.utilization),
+      resetsAt:    sessionLimit?.resets_at ?? payload?.five_hour?.resets_at ?? null,
+      windowDurationMins: 300
+    },
+    sevenDay: {
+      usedPercent: weeklyLimit?.percent ?? normalizeClaudeUtilization(payload?.seven_day?.utilization),
+      resetsAt:    weeklyLimit?.resets_at ?? payload?.seven_day?.resets_at ?? null,
+      windowDurationMins: 10080
+    }
+  };
 }
 
 function readSessionKey(cookiePath) {
@@ -71,18 +98,7 @@ async function fetchClaudeCodeProviderData({ deps = {} } = {}) {
     }
     const payload = await usageResp.json();
 
-    return createProviderResult({
-      fiveHour: {
-        usedPercent: normalizeClaudeUtilization(payload?.five_hour?.utilization),
-        resetsAt: payload?.five_hour?.resets_at ?? null,
-        windowDurationMins: 300
-      },
-      sevenDay: {
-        usedPercent: normalizeClaudeUtilization(payload?.seven_day?.utilization),
-        resetsAt: payload?.seven_day?.resets_at ?? null,
-        windowDurationMins: 10080
-      }
-    });
+    return createProviderResult(extractLimits(payload));
   } catch (err) {
     return createProviderResult({
       error: { message: `Claude usage unavailable: ${err.message}` }
@@ -90,4 +106,4 @@ async function fetchClaudeCodeProviderData({ deps = {} } = {}) {
   }
 }
 
-module.exports = { fetchClaudeCodeProviderData, readSessionKey, normalizeClaudeUtilization };
+module.exports = { fetchClaudeCodeProviderData, readSessionKey, normalizeClaudeUtilization, extractLimits };
